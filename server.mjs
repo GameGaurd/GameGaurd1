@@ -219,4 +219,4 @@ const server = createServer(async (request, response) => {
     return send(response, 404, { error: 'Not found' })
   } catch (error) { console.error(error); return send(response, 500, { error: 'Something went wrong. Please try again.' }) }
 })
-server.listen(port, () => console.log(`GameGuard API listening on http://localhost:${port}`))
+server.listen(port, '0.0.0.0', () => console.log(`GameGuard API listening on http://0.0.0.0:${port}`))

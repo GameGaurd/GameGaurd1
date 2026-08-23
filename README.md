@@ -22,7 +22,7 @@ npm run server
 
 Middleman login is available at `/middleman/login`. Accounts without the `middleman` or `admin` role are rejected by the server and redirected away from `/middleman/*` routes.
 
-The client is available at `http://localhost:5173`. The API uses a local ignored `data/auth.json` file for development users and sessions. Passwords are hashed with Node `scrypt`; sessions use HTTP-only, SameSite cookies. Set `NODE_ENV=production` behind HTTPS to enable the `Secure` cookie flag.
+The client is available at `http://localhost:5173` or through your forwarded workspace port at `http://<workspace-host>:5173`. Both the Vite client and API bind to `0.0.0.0` so the forwarded client port can reach the API through the Vite proxy. The API uses a local ignored `data/auth.json` file for development users and sessions. Passwords are hashed with Node `scrypt`; sessions use HTTP-only, SameSite cookies. Set `NODE_ENV=production` behind HTTPS to enable the `Secure` cookie flag.
 
 Authentication routes are `/signup`, `/login`, and `/forgot-password`. Protected routes redirect to `/login` with a return path.
 
