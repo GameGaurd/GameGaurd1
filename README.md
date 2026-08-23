@@ -26,6 +26,12 @@ The client is available at `http://localhost:5173` or through your forwarded wor
 
 Authentication routes are `/signup`, `/login`, and `/forgot-password`. Protected routes redirect to `/login` with a return path.
 
+## Production deployment
+
+The included `render.yaml` deploys the Vite build and Node API as one Render web service. In Render, create a new Blueprint from this repository, set `MIDDLEMAN_EMAIL` and `MIDDLEMAN_PASSWORD`, and deploy. The service listens on Render's `PORT` automatically through `API_PORT`'s default unless the host provides a port override.
+
+To connect `gamersguard.com` through Cloudflare, add the custom domain in Render first, then create the DNS record Render provides in Cloudflare. Keep the record proxied only if Render reports that Cloudflare proxying is supported for the custom domain. Add both the root domain and `www` if you want both URLs to work.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

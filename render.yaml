@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: gamersguard
+    runtime: node
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MIDDLEMAN_EMAIL
+        sync: false
+      - key: MIDDLEMAN_PASSWORD
+        sync: false
