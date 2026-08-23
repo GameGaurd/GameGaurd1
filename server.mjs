@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -11,12 +11,14 @@ const dbUrl = new URL('./data/auth.json', import.meta.url)
 const sessionHours = 24 * 7
 
 async function readDb() {
-  if (!existsSync(dbUrl)) return { users: [], sessions: [], resetTokens: [] }
-  return JSON.parse(await readFile(dbUrl, 'utf8'))
+  if (!existsSync(dbUrl)) return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], auditLogs: [] }
+  return { requests: [], messages: [], auditLogs: [], ...JSON.parse(await readFile(dbUrl, 'utf8')) }
 }
 async function writeDb(db) {
   await mkdir(dataDir, { recursive: true })
-  await writeFile(dbUrl, JSON.stringify(db, null, 2))
+  const tempUrl = new URL(`./data/auth.json.${process.pid}.${randomBytes(8).toString('hex')}.tmp`, import.meta.url)
+  await writeFile(tempUrl, JSON.stringify(db, null, 2))
+  await rename(tempUrl, dbUrl)
 }
 async function hashPassword(password) {
   const salt = randomBytes(16).toString('hex')
@@ -37,7 +39,7 @@ function send(response, status, body, headers = {}) {
   response.end(JSON.stringify(body))
 }
 function safeUser(user) {
-  return { id: user.id, username: user.username, email: user.email, role: user.role, avatar: user.avatar, createdAt: user.createdAt }
+  return { id: user.id, username: user.username, displayName: user.displayName || user.username, email: user.email, role: user.role, avatar: user.avatar, avatarUrl: user.avatarUrl, verifiedMiddleman: Boolean(user.verifiedMiddleman), createdAt: user.createdAt }
 }
 async function body(request) {
   let raw = ''
@@ -52,9 +54,11 @@ async function currentUser(request, db) {
 async function ensureMiddleman(db) {
   const email = process.env.MIDDLEMAN_EMAIL?.trim().toLowerCase()
   const password = process.env.MIDDLEMAN_PASSWORD
-  if (!email || !password || db.users.some((user) => user.email === email)) return
+  const existing = db.users.find((user) => user.email === email && user.role === 'middleman')
+  if (existing) { existing.username = 'MysticMM'; existing.displayName = 'MysticMM'; existing.avatar = 'MM'; existing.avatarUrl = '/avatars/mysticmm.svg'; existing.verifiedMiddleman = true; return }
+  if (!email || !password) return
   const username = process.env.MIDDLEMAN_USERNAME?.trim() || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_')
-  db.users.push({ id: randomBytes(12).toString('hex'), username, email, passwordHash: await hashPassword(password), role: 'middleman', avatar: username.slice(0, 2).toUpperCase(), createdAt: new Date().toISOString() })
+  db.users.push({ id: randomBytes(12).toString('hex'), username: 'MysticMM', displayName: 'MysticMM', email, passwordHash: await hashPassword(password), role: 'middleman', avatar: 'MM', avatarUrl: '/avatars/mysticmm.svg', verifiedMiddleman: true, createdAt: new Date().toISOString() })
 }
 async function requireMiddleman(request, db) {
   const user = await currentUser(request, db)
@@ -63,6 +67,14 @@ async function requireMiddleman(request, db) {
 function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) }
 function validPassword(password) { return typeof password === 'string' && password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /\d/.test(password) }
 function sessionCookie(token, maxAge = sessionHours * 60 * 60) { return `gg_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}` }
+function requestView(item, db) {
+  const buyer = db.users.find((user) => user.id === item.buyerId)
+  const seller = db.users.find((user) => user.id === item.sellerId)
+  const middleman = db.users.find((user) => user.id === item.middlemanId)
+  const allowedAuthors = new Set([item.middlemanId, item.buyerId, item.sellerId].filter(Boolean))
+  return { ...item, middleman: middleman ? safeUser(middleman) : null, buyer: buyer ? safeUser(buyer) : null, seller: seller ? safeUser(seller) : null, messages: db.messages.filter((message) => message.requestId === item.id && allowedAuthors.has(message.authorId)).map((message) => { const author = db.users.find((user) => user.id === message.authorId); return { ...message, authorName: author?.username || (message.system ? 'System' : 'Participant'), authorRole: author?.role || (message.system ? 'SYSTEM' : 'PARTICIPANT') } }) }
+}
+function addAudit(db, requestId, userId, action, detail) { db.auditLogs.push({ id: randomBytes(10).toString('hex'), requestId, userId, action, detail, createdAt: new Date().toISOString() }) }
 
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') { response.writeHead(204); return response.end() }
@@ -112,7 +124,88 @@ const server = createServer(async (request, response) => {
     }
     if (method === 'GET' && path === '/api/middleman/me') {
       const user = await requireMiddleman(request, db)
-      return user ? send(response, 200, { user: safeUser(user), stats: { pendingRequests: 0, activeTransactions: 0, completedTransactions: 0, openDisputes: 0 } }) : send(response, 403, { error: 'Middleman access required.' })
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      const assigned = db.requests.filter((item) => item.middlemanId === user.id)
+      return send(response, 200, { user: safeUser(user), stats: { pendingRequests: assigned.filter((item) => item.status === 'Open').length, activeTransactions: assigned.filter((item) => ['Accepted', 'Verification', 'In Progress'].includes(item.status)).length, completedTransactions: assigned.filter((item) => item.status === 'Completed').length, openDisputes: assigned.filter((item) => item.status === 'Disputed').length }, completedCount: assigned.filter((item) => item.status === 'Completed').length, averageRating: 'Not rated yet' })
+    }
+    if (method === 'GET' && path === '/api/middleman/requests') {
+      const user = await requireMiddleman(request, db)
+      return user ? send(response, 200, { requests: db.requests.filter((item) => item.middlemanId === user.id).map((item) => requestView(item, db)) }) : send(response, 403, { error: 'Middleman access required.' })
+    }
+    const requestMatch = path.match(/^\/api\/middleman\/requests\/([^/]+)$/)
+    if (requestMatch && method === 'GET') {
+      const user = await requireMiddleman(request, db)
+      const item = db.requests.find((entry) => entry.id === requestMatch[1] && entry.middlemanId === user?.id)
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      return item ? send(response, 200, { request: requestView(item, db) }) : send(response, 404, { error: 'Request not found.' })
+    }
+    if (requestMatch && method === 'PATCH') {
+      const user = await requireMiddleman(request, db)
+      const item = db.requests.find((entry) => entry.id === requestMatch[1] && entry.middlemanId === user?.id)
+      const input = await body(request)
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      if (!item) return send(response, 404, { error: 'Request not found.' })
+      if (!['Open', 'Accepted', 'Declined', 'Verification', 'In Progress', 'Completed', 'Disputed'].includes(input?.status)) return send(response, 400, { error: 'Invalid request status.' })
+      item.status = input.status; item.updatedAt = new Date().toISOString(); addAudit(db, item.id, user.id, 'status_changed', `Status changed to ${item.status}`)
+      db.messages.push({ id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: `System: transaction status changed to ${item.status}.`, system: true, createdAt: new Date().toISOString(), readBy: [user.id] })
+      await writeDb(db); return send(response, 200, { request: requestView(item, db) })
+    }
+    const participantMatch = path.match(/^\/api\/middleman\/requests\/([^/]+)\/participants$/)
+    if (participantMatch && method === 'POST') {
+      const user = await requireMiddleman(request, db)
+      const item = db.requests.find((entry) => entry.id === participantMatch[1] && entry.middlemanId === user?.id)
+      const input = await body(request)
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      if (!item) return send(response, 404, { error: 'Request not found.' })
+      if (input?.role !== 'buyer' || !String(input?.username || '').trim()) return send(response, 400, { error: 'Enter the buyer username.' })
+      const participant = db.users.find((entry) => entry.username.toLowerCase() === String(input.username).trim().toLowerCase())
+      if (!participant) return send(response, 404, { error: 'No account found with that username.' })
+      item[`${input.role}Id`] = participant.id; item.updatedAt = new Date().toISOString(); addAudit(db, item.id, user.id, 'participant_added', `${input.role} added: ${participant.username}`); await writeDb(db)
+      return send(response, 200, { request: requestView(item, db) })
+    }
+    const messageMatch = path.match(/^\/api\/middleman\/requests\/([^/]+)\/messages$/)
+    if (messageMatch && method === 'POST') {
+      const user = await requireMiddleman(request, db)
+      const item = db.requests.find((entry) => entry.id === messageMatch[1] && entry.middlemanId === user?.id)
+      const input = await body(request)
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      if (!item) return send(response, 404, { error: 'Request not found.' })
+      if (!String(input?.body || '').trim()) return send(response, 400, { error: 'Message cannot be empty.' })
+      const message = { id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: String(input.body).trim(), system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
+      db.messages.push(message); addAudit(db, item.id, user.id, 'message_sent', 'Middleman sent a chat message'); await writeDb(db)
+      return send(response, 201, { message })
+    }
+    if (method === 'GET' && path === '/api/middleman/audit-logs') {
+      const user = await requireMiddleman(request, db)
+      const ids = new Set(db.requests.filter((item) => item.middlemanId === user?.id).map((item) => item.id))
+      return user ? send(response, 200, { logs: db.auditLogs.filter((log) => ids.has(log.requestId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) }) : send(response, 403, { error: 'Middleman access required.' })
+    }
+    if (method === 'GET' && path === '/api/requests') {
+      const user = await currentUser(request, db)
+      if (!user) return send(response, 401, { error: 'Authentication required.' })
+      return send(response, 200, { requests: db.requests.filter((item) => item.requesterId === user.id || item.buyerId === user.id || item.sellerId === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((item) => requestView(item, db)) })
+    }
+    const customerMessageMatch = path.match(/^\/api\/requests\/([^/]+)\/messages$/)
+    if (customerMessageMatch && method === 'POST') {
+      const user = await currentUser(request, db)
+      const item = db.requests.find((entry) => entry.id === customerMessageMatch[1] && (entry.requesterId === user?.id || entry.buyerId === user?.id || entry.sellerId === user?.id))
+      const input = await body(request)
+      if (!user) return send(response, 401, { error: 'Authentication required.' })
+      if (!item) return send(response, 404, { error: 'Transaction not found.' })
+      if (!String(input?.body || '').trim()) return send(response, 400, { error: 'Message cannot be empty.' })
+      const message = { id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: String(input.body).trim(), system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
+      db.messages.push(message); addAudit(db, item.id, user.id, 'message_sent', 'Participant sent a chat message'); await writeDb(db)
+      return send(response, 201, { message })
+    }
+    if (method === 'POST' && path === '/api/requests') {
+      const user = await currentUser(request, db)
+      const input = await body(request)
+      const middleman = db.users.find((item) => item.role === 'middleman')
+      if (!user) return send(response, 401, { error: 'Authentication required.' })
+      if (!middleman) return send(response, 503, { error: 'No middleman is available.' })
+      const item = { id: `MM-${new Date().getFullYear()}-${String(db.requests.length + 1).padStart(6, '0')}`, game: String(input?.game || 'Unspecified'), item: String(input?.item || 'Transaction'), amount: String(input?.amount || '0.00'), status: 'Open', createdAt: new Date().toISOString(), middlemanId: middleman.id, requesterId: user.id, sellerId: user.id, buyerId: null }
+      db.requests.push(item); addAudit(db, item.id, user.id, 'request_created', 'Customer created a middleman request'); db.messages.push({ id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: 'System: transaction room created.', system: true, createdAt: item.createdAt, readBy: [] }); await writeDb(db)
+      return send(response, 201, { request: requestView(item, db) })
     }
     if (method === 'POST' && path === '/api/auth/logout') {
       const token = cookieValue(request, 'gg_session'); db.sessions = db.sessions.filter((session) => session.token !== token); await writeDb(db)

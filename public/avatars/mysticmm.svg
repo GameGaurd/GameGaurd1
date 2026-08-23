@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MysticMM gaming avatar">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#162b52"/>
+      <stop offset="0.52" stop-color="#4b5bd5"/>
+      <stop offset="1" stop-color="#713d89"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="12" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <circle cx="256" cy="256" r="238" fill="#0c1420" stroke="#6995ff" stroke-width="8"/>
+  <circle cx="256" cy="256" r="205" fill="url(#bg)" filter="url(#glow)"/>
+  <circle cx="256" cy="256" r="174" fill="#111b35" fill-opacity=".58"/>
+  <path d="M132 213 170 145 256 116 342 145 380 213 360 359 306 408H206l-54-49Z" fill="#0b1224" stroke="#93b4ff" stroke-width="8"/>
+  <path d="m158 218 36-54 62-22 62 22 36 54-27 20-71-22-71 22Z" fill="#283b78"/>
+  <path d="m162 247 61-20 33 19 33-19 61 20-18 90-46 44h-60l-46-44Z" fill="#16264f" stroke="#5c83ef" stroke-width="6"/>
+  <path d="m181 263 62-12 13 16-18 45-46-5Z" fill="#7be6ff"/>
+  <path d="m331 263-62-12-13 16 18 45 46-5Z" fill="#ca83ff"/>
+  <path d="M208 357h96l-22 32h-52Z" fill="#4c5ee4"/>
+  <path d="m174 177 20-34m144 34-20-34" stroke="#d7e4ff" stroke-width="9" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MysticMM customer view avatar">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#071a2d"/>
+      <stop offset=".5" stop-color="#16658a"/>
+      <stop offset="1" stop-color="#6b3e91"/>
+    </linearGradient>
+    <linearGradient id="visor" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#64e7ff"/>
+      <stop offset="1" stop-color="#bd7dff"/>
+    </linearGradient>
+  </defs>
+  <circle cx="256" cy="256" r="242" fill="#09121e" stroke="#54d8ef" stroke-width="8"/>
+  <circle cx="256" cy="256" r="211" fill="url(#sky)"/>
+  <path d="M113 369c22-75 73-112 143-112s121 37 143 112" fill="#101c35" stroke="#83aaff" stroke-width="8"/>
+  <path d="M137 207c13-74 56-112 119-112s106 38 119 112l-30 86H167Z" fill="#162440" stroke="#a3c8ff" stroke-width="8"/>
+  <path d="m151 216 105-31 105 31-21 65H172Z" fill="#0b172a" stroke="url(#visor)" stroke-width="10"/>
+  <path d="m174 222 78-22 78 22-12 27-66-12-66 12Z" fill="url(#visor)"/>
+  <path d="M203 313h106l-25 40h-56Z" fill="#4d62ca"/>
+  <circle cx="159" cy="189" r="12" fill="#65e7ff"/><circle cx="353" cy="189" r="12" fill="#c281ff"/>
+</svg>
