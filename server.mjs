@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
 import { extname } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -10,6 +10,7 @@ const port = Number(process.env.API_PORT || process.env.PORT || 8787)
 const dataDir = process.env.VERCEL === '1' ? new URL('file:///tmp/gameguard-data/') : new URL('./data/', import.meta.url)
 const dbUrl = new URL('auth.json', dataDir)
 const sessionHours = 24 * 7
+const sessionSecret = process.env.SESSION_SECRET || process.env.MIDDLEMAN_PASSWORD || 'gameguard-development-session-secret'
 
 async function readDb() {
   if (!existsSync(dbUrl)) return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], auditLogs: [] }
@@ -35,6 +36,21 @@ function cookieValue(request, name) {
   const cookies = request.headers.cookie?.split(';').map((item) => item.trim()) || []
   return cookies.find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1)
 }
+function signedMiddlemanSession(user) {
+  const payload = Buffer.from(JSON.stringify({ userId: user.id, role: user.role, expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 })).toString('base64url')
+  const signature = createHmac('sha256', sessionSecret).update(payload).digest('base64url')
+  return `${payload}.${signature}`
+}
+function verifyMiddlemanSession(token, db) {
+  const [payload, signature] = String(token || '').split('.')
+  if (!payload || !signature) return null
+  const expected = createHmac('sha256', sessionSecret).update(payload).digest('base64url')
+  if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+    return session.expiresAt > Date.now() && ['middleman', 'admin'].includes(session.role) ? db.users.find((user) => user.id === session.userId && user.role === session.role) : null
+  } catch { return null }
+}
 function send(response, status, body, headers = {}) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers })
   response.end(JSON.stringify(body))
@@ -50,7 +66,7 @@ async function body(request) {
 async function currentUser(request, db) {
   const token = cookieValue(request, 'gg_session')
   const session = db.sessions.find((item) => item.token === token && item.expiresAt > Date.now())
-  return session ? db.users.find((user) => user.id === session.userId) : null
+  return session ? db.users.find((user) => user.id === session.userId) : verifyMiddlemanSession(token, db)
 }
 async function ensureMiddleman(db) {
   const email = process.env.MIDDLEMAN_EMAIL?.trim().toLowerCase()
@@ -146,7 +162,7 @@ export const handler = async (request, response) => {
       const identity = String(input?.identity || input?.email || '').trim().toLowerCase()
       const user = db.users.find((item) => (item.email.toLowerCase() === identity || item.username.toLowerCase() === identity) && (item.role === 'middleman' || item.role === 'admin'))
       if (!user || !input?.password || !(await verifyPassword(input.password, user.passwordHash))) return send(response, 401, { error: 'Invalid middleman credentials.' })
-      const token = randomBytes(32).toString('hex')
+      const token = signedMiddlemanSession(user)
       db.sessions.push({ token, userId: user.id, createdAt: Date.now(), expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 }); await writeDb(db)
       return send(response, 200, { user: safeUser(user) }, { 'set-cookie': sessionCookie(token) })
     }
