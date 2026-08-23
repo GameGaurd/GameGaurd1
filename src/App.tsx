@@ -965,12 +965,14 @@ function AuthPage({
   });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const isLogin = mode === "login" || mode === "middleman-login";
   const isMiddleman = mode === "middleman-login";
   const isForgot = mode === "forgot-password";
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    setSubmitting(true);
     const endpoint = isMiddleman
       ? "/api/middleman/login"
       : isForgot
@@ -983,21 +985,27 @@ function AuthPage({
       : isLogin
         ? { identity: form.identity, password: form.password }
         : form;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await response.json();
-    if (!response.ok) return setError(data.error);
-    if (isForgot) return setMessage(data.message);
-    setUser(data.user);
-    window.location.assign(
-      isMiddleman
-        ? "/middleman/dashboard"
-        : new URLSearchParams(window.location.search).get("next") ||
-            "/dashboard",
-    );
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) return setError(data.error || "Unable to sign in.");
+      if (isForgot) return setMessage(data.message);
+      setUser(data.user);
+      window.location.assign(
+        isMiddleman
+          ? "/middleman/dashboard"
+          : new URLSearchParams(window.location.search).get("next") ||
+              "/dashboard",
+      );
+    } catch {
+      setError("The server could not be reached. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
   return (
     <div className="auth-page">
@@ -1095,8 +1103,8 @@ function AuthPage({
               />
             </label>
           )}
-          <button className="primary-button auth-submit">
-            {isForgot ? "Send instructions" : "Sign in"} <span>→</span>
+          <button className="primary-button auth-submit" disabled={submitting}>
+            {submitting ? "Signing in..." : isForgot ? "Send instructions" : "Sign in"} <span>→</span>
           </button>
         </form>
         {(isLogin || isForgot) && (

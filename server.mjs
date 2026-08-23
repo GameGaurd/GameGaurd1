@@ -7,8 +7,8 @@ import { promisify } from 'node:util'
 
 const scrypt = promisify(scryptCallback)
 const port = Number(process.env.API_PORT || process.env.PORT || 8787)
-const dataDir = new URL('./data/', import.meta.url)
-const dbUrl = new URL('./data/auth.json', import.meta.url)
+const dataDir = process.env.VERCEL === '1' ? new URL('file:///tmp/gameguard-data/') : new URL('./data/', import.meta.url)
+const dbUrl = new URL('auth.json', dataDir)
 const sessionHours = 24 * 7
 
 async function readDb() {
