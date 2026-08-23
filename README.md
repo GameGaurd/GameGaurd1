@@ -28,6 +28,12 @@ Authentication routes are `/signup`, `/login`, and `/forgot-password`. Protected
 
 ## Production deployment
 
+### Vercel
+
+Import this repository into Vercel. The included `vercel.json` builds the Vite frontend and routes `/api/*` to the existing Node API function. Add `MIDDLEMAN_EMAIL`, `MIDDLEMAN_PASSWORD`, and optionally `MIDDLEMAN_USERNAME` under Vercel project settings, then redeploy.
+
+The current API stores users, sessions, requests, messages, and reset tokens in `data/auth.json`. Vercel function filesystems are ephemeral, so this file is suitable for local development only; connect the API to a persistent database before relying on production accounts or transactions. Also set `NODE_ENV=production` so session cookies use the `Secure` flag.
+
 The included `render.yaml` deploys the Vite build and Node API as one Render web service. In Render, create a new Blueprint from this repository, set `MIDDLEMAN_EMAIL` and `MIDDLEMAN_PASSWORD`, and deploy. The service listens on Render's `PORT` automatically through `API_PORT`'s default unless the host provides a port override.
 
 To connect `gamersguard.com` through Cloudflare, add the custom domain in Render first, then create the DNS record Render provides in Cloudflare. Keep the record proxied only if Render reports that Cloudflare proxying is supported for the custom domain. Add both the root domain and `www` if you want both URLs to work.

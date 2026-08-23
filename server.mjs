@@ -100,7 +100,7 @@ async function serveFrontend(request, response) {
   }
 }
 
-const server = createServer(async (request, response) => {
+export const handler = async (request, response) => {
   if (request.method === 'OPTIONS') { response.writeHead(204); return response.end() }
   if (await serveFrontend(request, response)) return
   if (!request.url?.startsWith('/api/')) return send(response, 404, { error: 'Not found' })
@@ -243,5 +243,9 @@ const server = createServer(async (request, response) => {
     }
     return send(response, 404, { error: 'Not found' })
   } catch (error) { console.error(error); return send(response, 500, { error: 'Something went wrong. Please try again.' }) }
-})
-server.listen(port, '0.0.0.0', () => console.log(`GameGuard API listening on http://0.0.0.0:${port}`))
+}
+
+if (process.env.VERCEL !== '1') {
+  const server = createServer(handler)
+  server.listen(port, '0.0.0.0', () => console.log(`GameGuard API listening on http://0.0.0.0:${port}`))
+}
