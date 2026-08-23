@@ -106,7 +106,10 @@ export const handler = async (request, response) => {
   if (!request.url?.startsWith('/api/')) return send(response, 404, { error: 'Not found' })
   const db = await readDb()
   db.sessions = db.sessions.filter((session) => session.expiresAt > Date.now())
-  const path = new URL(request.url, `http://${request.headers.host}`).pathname
+  const requestUrl = new URL(request.url, `http://${request.headers.host}`)
+  const path = requestUrl.pathname === '/api/index' && requestUrl.searchParams.has('path')
+    ? `/api/${requestUrl.searchParams.get('path')}`
+    : requestUrl.pathname
   const method = request.method
   try {
     await ensureMiddleman(db)
