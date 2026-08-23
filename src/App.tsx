@@ -991,9 +991,16 @@ function AuthPage({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
-      if (!response.ok) return setError(data.error || "Unable to sign in.");
-      if (isForgot) return setMessage(data.message);
+      const responseText = await response.text();
+      let data: { error?: string; message?: string; user?: User } = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        return setError(`The server returned an invalid response (${response.status}).`);
+      }
+      if (!response.ok) return setError(data.error || `Request failed (${response.status}).`);
+      if (isForgot) return setMessage(data.message || "Instructions sent.");
+      if (!data.user) return setError("The server did not return an account.");
       setUser(data.user);
       window.location.assign(
         isMiddleman
