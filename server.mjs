@@ -37,7 +37,7 @@ function cookieValue(request, name) {
   return cookies.find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1)
 }
 function signedMiddlemanSession(user) {
-  const payload = Buffer.from(JSON.stringify({ userId: user.id, role: user.role, expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ userId: user.id, email: user.email, role: user.role, expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 })).toString('base64url')
   const signature = createHmac('sha256', sessionSecret).update(payload).digest('base64url')
   return `${payload}.${signature}`
 }
@@ -48,7 +48,9 @@ function verifyMiddlemanSession(token, db) {
   if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null
   try {
     const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-    return session.expiresAt > Date.now() && ['middleman', 'admin'].includes(session.role) ? db.users.find((user) => user.id === session.userId && user.role === session.role) : null
+    return session.expiresAt > Date.now() && ['middleman', 'admin'].includes(session.role)
+      ? db.users.find((user) => user.email === session.email && user.role === session.role) || db.users.find((user) => user.id === session.userId && user.role === session.role)
+      : null
   } catch { return null }
 }
 function send(response, status, body, headers = {}) {
