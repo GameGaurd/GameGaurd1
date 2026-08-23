@@ -17,7 +17,7 @@ async function readDb() {
 }
 async function writeDb(db) {
   await mkdir(dataDir, { recursive: true })
-  const tempUrl = new URL(`./data/auth.json.${process.pid}.${randomBytes(8).toString('hex')}.tmp`, import.meta.url)
+  const tempUrl = new URL(`auth.json.${process.pid}.${randomBytes(8).toString('hex')}.tmp`, dataDir)
   await writeFile(tempUrl, JSON.stringify(db, null, 2))
   await rename(tempUrl, dbUrl)
 }
