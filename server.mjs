@@ -2,10 +2,11 @@ import { createServer } from 'node:http'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto'
+import { extname } from 'node:path'
 import { promisify } from 'node:util'
 
 const scrypt = promisify(scryptCallback)
-const port = Number(process.env.API_PORT || 8787)
+const port = Number(process.env.API_PORT || process.env.PORT || 8787)
 const dataDir = new URL('./data/', import.meta.url)
 const dbUrl = new URL('./data/auth.json', import.meta.url)
 const sessionHours = 24 * 7
@@ -75,9 +76,33 @@ function requestView(item, db) {
   return { ...item, middleman: middleman ? safeUser(middleman) : null, buyer: buyer ? safeUser(buyer) : null, seller: seller ? safeUser(seller) : null, messages: db.messages.filter((message) => message.requestId === item.id && allowedAuthors.has(message.authorId)).map((message) => { const author = db.users.find((user) => user.id === message.authorId); return { ...message, authorName: author?.username || (message.system ? 'System' : 'Participant'), authorRole: author?.role || (message.system ? 'SYSTEM' : 'PARTICIPANT') } }) }
 }
 function addAudit(db, requestId, userId, action, detail) { db.auditLogs.push({ id: randomBytes(10).toString('hex'), requestId, userId, action, detail, createdAt: new Date().toISOString() }) }
+const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon' }
+async function serveFrontend(request, response) {
+  if (request.method !== 'GET') return false
+  const requestedPath = decodeURIComponent(new URL(request.url || '/', 'http://localhost').pathname)
+  if (requestedPath.startsWith('/api/')) return false
+  const relativePath = requestedPath === '/' ? '/index.html' : requestedPath
+  if (relativePath.includes('..')) return false
+  const fileUrl = new URL(`./dist${relativePath}`, import.meta.url)
+  try {
+    const file = await readFile(fileUrl)
+    response.writeHead(200, { 'content-type': contentTypes[extname(relativePath)] || 'application/octet-stream' })
+    response.end(file)
+    return true
+  } catch {
+    if (!extname(relativePath)) {
+      const file = await readFile(new URL('./dist/index.html', import.meta.url))
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      response.end(file)
+      return true
+    }
+    return false
+  }
+}
 
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') { response.writeHead(204); return response.end() }
+  if (await serveFrontend(request, response)) return
   if (!request.url?.startsWith('/api/')) return send(response, 404, { error: 'Not found' })
   const db = await readDb()
   db.sessions = db.sessions.filter((session) => session.expiresAt > Date.now())
