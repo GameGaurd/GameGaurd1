@@ -70,14 +70,7 @@ function App() {
             : "Overview",
   );
   const [mode, setMode] = useState<"buyer" | "seller">("buyer");
-  const [request, setRequest] = useState<RequestRecord | null>(() => {
-    try {
-      const saved = localStorage.getItem("gameguard-request-v2");
-      return saved ? (JSON.parse(saved) as RequestRecord) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [request, setRequest] = useState<RequestRecord | null>(null);
   const [showRequest, setShowRequest] = useState(false);
   const [step, setStep] = useState(1);
   const [toast, setToast] = useState("");
@@ -108,31 +101,10 @@ function App() {
       .catch(() => undefined);
   }, [user]);
   useEffect(() => {
-    if (request)
-      localStorage.setItem("gameguard-request-v2", JSON.stringify(request));
-    else localStorage.removeItem("gameguard-request-v2");
-    if (
-      !user ||
-      user.role !== "customer" ||
-      !request ||
-      (request.id && localStorage.getItem(`gameguard-synced-${request.id}`))
-    )
-      return;
-    fetch("/api/requests", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        game: request.game,
-        item: request.item,
-        amount: request.amount,
-      }),
-    })
-      .then((response) => {
-        if (response.ok)
-          localStorage.setItem(`gameguard-synced-${request.id}`, "1");
-        else setToast("Request could not be saved. Please try again.");
-      })
-      .catch(() => setToast("Request could not be saved. Please try again."));
+    if (!user || user.role !== "customer") return;
+    const requestKey = `gameguard-request-${user.id}`;
+    if (request) localStorage.setItem(requestKey, JSON.stringify(request));
+    else localStorage.removeItem(requestKey);
   }, [request, user]);
   useEffect(() => {
     if (!user || user.role !== "customer") return;
@@ -141,7 +113,10 @@ function App() {
         .then((response) => (response.ok ? response.json() : null))
         .then((data) => {
           const latest = data?.requests?.[0];
-          if (!latest) return;
+          if (!latest) {
+            setRequest(null);
+            return;
+          }
           localStorage.setItem(`gameguard-synced-${latest.id}`, "1");
           setRequest({
             id: latest.id,
