@@ -436,36 +436,36 @@ function App() {
             setStep(1);
           }}
           submit={async ({ game, item, amount }) => {
-            const response = await fetch("/api/requests", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                game,
-                item,
-                amount,
-              }),
-            });
-            if (!response.ok) {
-              setToast("Request could not be submitted. Please try again.");
-              return;
+            try {
+              const response = await fetch("/api/requests", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ game, item, amount }),
+              });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                setToast(data.error || "Request could not be submitted. Please try again.");
+                return;
+              }
+              const created = data.request;
+              setRequest({
+                id: created.id,
+                game: created.game,
+                item: created.item,
+                amount: created.amount,
+                status: created.status,
+                created: new Date(created.createdAt).toLocaleString(),
+                middleman: created.middleman,
+                buyer: created.buyer,
+                seller: created.seller,
+                messages: [],
+              });
+              setShowRequest(false);
+              setStep(1);
+              setToast(`Request submitted · ${created.id}`);
+            } catch {
+              setToast("The server could not be reached. Please try again.");
             }
-            const data = await response.json();
-            const created = data.request;
-            setRequest({
-              id: created.id,
-              game: created.game,
-              item: created.item,
-              amount: created.amount,
-              status: created.status,
-              created: new Date(created.createdAt).toLocaleString(),
-              middleman: created.middleman,
-              buyer: created.buyer,
-              seller: created.seller,
-              messages: [],
-            });
-            setShowRequest(false);
-            setStep(1);
-            setToast(`Request submitted · ${created.id}`);
           }}
         />
       )}
