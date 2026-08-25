@@ -74,9 +74,16 @@ async function currentUser(request, db) {
 async function ensureMiddleman(db) {
   const email = process.env.MIDDLEMAN_EMAIL?.trim().toLowerCase()
   const password = process.env.MIDDLEMAN_PASSWORD
-  const existing = db.users.find((user) => user.email === email && user.role === 'middleman')
-  if (existing) { existing.username = 'MysticMM'; existing.displayName = 'MysticMM'; existing.avatar = 'MM'; existing.avatarUrl = '/avatars/mysticmm.svg'; existing.verifiedMiddleman = true; return }
   if (!email || !password) return
+  const existing = db.users.find((user) => user.email === email && user.role === 'middleman')
+    || db.users.find((user) => user.role === 'middleman' && user.username === 'MysticMM')
+    || db.users.find((user) => user.role === 'middleman')
+  if (existing) {
+    existing.email = email
+    existing.passwordHash = await hashPassword(password)
+    existing.username = 'MysticMM'; existing.displayName = 'MysticMM'; existing.avatar = 'MM'; existing.avatarUrl = '/avatars/mysticmm.svg'; existing.verifiedMiddleman = true
+    return
+  }
   const username = process.env.MIDDLEMAN_USERNAME?.trim() || email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_')
   db.users.push({ id: randomBytes(12).toString('hex'), username: 'MysticMM', displayName: 'MysticMM', email, passwordHash: await hashPassword(password), role: 'middleman', avatar: 'MM', avatarUrl: '/avatars/mysticmm.svg', verifiedMiddleman: true, createdAt: new Date().toISOString() })
 }
