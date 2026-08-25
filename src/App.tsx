@@ -220,7 +220,7 @@ function App() {
     path.startsWith("/middleman") &&
     (!user || (user.role !== "middleman" && user.role !== "admin"))
   ) {
-    window.location.replace("/middleman/login");
+    window.location.replace(user ? "/dashboard" : "/middleman/login");
     return <AuthLoading />;
   }
   if (!user) return <GuestView />;
@@ -1104,12 +1104,13 @@ function AuthPage({
       if (isForgot) return setMessage(data.message || "Instructions sent.");
       if (!data.user) return setError("The server did not return an account.");
       setUser(data.user);
-      window.location.assign(
-        isMiddleman
-          ? "/middleman/dashboard"
-          : new URLSearchParams(window.location.search).get("next") ||
-              "/dashboard",
-      );
+      const next = new URLSearchParams(window.location.search).get("next");
+      const destination = isMiddleman
+        ? "/middleman/dashboard"
+        : next?.startsWith("/middleman")
+          ? "/dashboard"
+          : next || "/dashboard";
+      window.location.assign(destination);
     } catch {
       setError("The server could not be reached. Please try again.");
     } finally {
