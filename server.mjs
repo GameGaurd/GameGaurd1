@@ -211,6 +211,28 @@ export const handler = async (request, response) => {
     if (method === 'POST' && path === '/api/middleman/login') {
       const input = await body(request)
       const identity = String(input?.identity || input?.email || '').trim().toLowerCase()
+      const configuredEmail = process.env.MIDDLEMAN_EMAIL?.trim().toLowerCase()
+      const configuredPassword = process.env.MIDDLEMAN_PASSWORD
+      const configuredUsername = (process.env.MIDDLEMAN_USERNAME?.trim().toLowerCase() || 'mysticmm')
+      if (configuredPassword && input?.password === configuredPassword && (identity === configuredEmail || identity === configuredUsername || identity === 'mysticmm')) {
+        let middleman = db.users.find((item) => item.role === 'middleman')
+        if (!middleman) {
+          middleman = { id: randomBytes(12).toString('hex'), username: 'MysticMM', displayName: 'MysticMM', email: configuredEmail || 'middleman@example.com', passwordHash: await hashPassword(configuredPassword), role: 'middleman', avatar: 'MM', avatarUrl: '/avatars/mysticmm.svg', verifiedMiddleman: true, createdAt: new Date().toISOString() }
+          db.users.push(middleman)
+        } else {
+          middleman.email = configuredEmail || middleman.email
+          middleman.username = 'MysticMM'
+          middleman.displayName = 'MysticMM'
+          middleman.avatar = 'MM'
+          middleman.avatarUrl = '/avatars/mysticmm.svg'
+          middleman.verifiedMiddleman = true
+          const alreadySynced = await verifyPassword(configuredPassword, middleman.passwordHash).catch(() => false)
+          if (!alreadySynced) middleman.passwordHash = await hashPassword(configuredPassword)
+        }
+        const token = signedSession(middleman)
+        db.sessions.push({ token, userId: middleman.id, createdAt: Date.now(), expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 }); await writeDb(db)
+        return send(response, 200, { user: safeUser(middleman) }, { 'set-cookie': sessionCookie(token) })
+      }
       const user = db.users.find((item) => (item.email.toLowerCase() === identity || item.username.toLowerCase() === identity) && (item.role === 'middleman' || item.role === 'admin'))
       if (!user || !input?.password || !(await verifyPassword(input.password, user.passwordHash))) return send(response, 401, { error: 'Invalid middleman credentials.' })
       const token = signedSession(user)
