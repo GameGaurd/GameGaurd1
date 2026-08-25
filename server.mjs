@@ -197,6 +197,15 @@ export const handler = async (request, response) => {
       if (!user) return send(response, 403, { error: 'Middleman access required.' })
       return send(response, 200, { conversations: db.conversations.filter((conversation) => conversation.middlemanId === user.id).map((conversation) => privateConversationView(conversation, db)) })
     }
+    if (method === 'GET' && path === '/api/conversations') {
+      const user = await currentUser(request, db)
+      if (!user) return send(response, 401, { error: 'Authentication required.' })
+      const conversations = db.conversations
+        .filter((conversation) => conversation.customerId === user.id || conversation.middlemanId === user.id)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map((conversation) => privateConversationView(conversation, db))
+      return send(response, 200, { conversations })
+    }
     if (method === 'POST' && path === '/api/conversations') {
       const user = await currentUser(request, db)
       const input = await body(request)

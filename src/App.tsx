@@ -92,6 +92,22 @@ function App() {
       .finally(() => setAuthLoading(false));
   }, []);
   useEffect(() => {
+    if (!user || user.role !== "customer") return;
+    fetch("/api/conversations")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        const conversations = data?.conversations || [];
+        const savedId = localStorage.getItem("gameguard-private-conversation");
+        const conversation = conversations.find(
+          (item: PrivateConversation) => item.id === savedId,
+        ) || conversations[0];
+        if (!conversation) return;
+        localStorage.setItem("gameguard-private-conversation", conversation.id);
+        setPrivateConversation(conversation);
+      })
+      .catch(() => undefined);
+  }, [user]);
+  useEffect(() => {
     if (request)
       localStorage.setItem("gameguard-request-v2", JSON.stringify(request));
     else localStorage.removeItem("gameguard-request-v2");
@@ -231,6 +247,7 @@ function App() {
     const response = await fetch("/api/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
     if (!response.ok) return setToast("Middleman chat could not be opened");
     const data = await response.json();
+    localStorage.setItem("gameguard-private-conversation", data.conversation.id);
     setPrivateConversation(data.conversation);
     setViewState("Messages");
   };
