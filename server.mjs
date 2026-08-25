@@ -9,14 +9,29 @@ const scrypt = promisify(scryptCallback)
 const port = Number(process.env.API_PORT || process.env.PORT || 8787)
 const dataDir = process.env.VERCEL === '1' ? new URL('file:///tmp/gameguard-data/') : new URL('./data/', import.meta.url)
 const dbUrl = new URL('auth.json', dataDir)
+const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '')
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 const sessionHours = 24 * 7
 const sessionSecret = process.env.SESSION_SECRET || process.env.MIDDLEMAN_PASSWORD || 'gameguard-development-session-secret'
 
+function emptyDb() { return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], conversations: [], auditLogs: [] } }
+function supabaseHeaders() { return { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'content-type': 'application/json' } }
 async function readDb() {
-  if (!existsSync(dbUrl)) return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], conversations: [], auditLogs: [] }
+  if (supabaseUrl && supabaseKey) {
+    const response = await fetch(`${supabaseUrl}/rest/v1/gameguard_state?id=eq.main&select=data`, { headers: supabaseHeaders() })
+    if (!response.ok) throw new Error(`Supabase read failed (${response.status})`)
+    const rows = await response.json()
+    return { ...emptyDb(), ...(rows[0]?.data || {}) }
+  }
+  if (!existsSync(dbUrl)) return emptyDb()
   return { requests: [], messages: [], conversations: [], auditLogs: [], ...JSON.parse(await readFile(dbUrl, 'utf8')) }
 }
 async function writeDb(db) {
+  if (supabaseUrl && supabaseKey) {
+    const response = await fetch(`${supabaseUrl}/rest/v1/gameguard_state`, { method: 'POST', headers: { ...supabaseHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ id: 'main', data: db, updated_at: new Date().toISOString() }) })
+    if (!response.ok) throw new Error(`Supabase write failed (${response.status})`)
+    return
+  }
   await mkdir(dataDir, { recursive: true })
   const tempUrl = new URL(`auth.json.${process.pid}.${randomBytes(8).toString('hex')}.tmp`, dataDir)
   await writeFile(tempUrl, JSON.stringify(db, null, 2))
