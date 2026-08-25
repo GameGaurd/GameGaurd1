@@ -164,7 +164,7 @@ export const handler = async (request, response) => {
       if (db.users.some((user) => user.username.toLowerCase() === input.username.toLowerCase())) return send(response, 409, { error: 'Username already exists.' })
       if (db.users.some((user) => user.email.toLowerCase() === input.email.toLowerCase())) return send(response, 409, { error: 'Email already registered.' })
       const user = { id: randomBytes(12).toString('hex'), username: input.username, email: input.email.toLowerCase(), passwordHash: await hashPassword(input.password), role: 'customer', avatar: input.username.slice(0, 2).toUpperCase(), createdAt: new Date().toISOString() }
-      const token = randomBytes(32).toString('hex')
+      const token = signedSession(user)
       db.users.push(user); db.sessions.push({ token, userId: user.id, createdAt: Date.now(), expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 }); await writeDb(db)
       return send(response, 201, { user: safeUser(user) }, { 'set-cookie': sessionCookie(token) })
     }
@@ -173,7 +173,7 @@ export const handler = async (request, response) => {
       const identity = String(input?.identity || '').trim().toLowerCase()
       const user = db.users.find((item) => item.email.toLowerCase() === identity || item.username.toLowerCase() === identity)
       if (!user || !input?.password || !(await verifyPassword(input.password, user.passwordHash))) return send(response, 401, { error: 'Invalid username/email or password.' })
-      const token = randomBytes(32).toString('hex')
+      const token = signedSession(user)
       db.sessions.push({ token, userId: user.id, createdAt: Date.now(), expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 }); await writeDb(db)
       return send(response, 200, { user: safeUser(user) }, { 'set-cookie': sessionCookie(token) })
     }
