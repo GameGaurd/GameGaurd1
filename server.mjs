@@ -13,8 +13,8 @@ const sessionHours = 24 * 7
 const sessionSecret = process.env.SESSION_SECRET || process.env.MIDDLEMAN_PASSWORD || 'gameguard-development-session-secret'
 
 async function readDb() {
-  if (!existsSync(dbUrl)) return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], auditLogs: [] }
-  return { requests: [], messages: [], auditLogs: [], ...JSON.parse(await readFile(dbUrl, 'utf8')) }
+  if (!existsSync(dbUrl)) return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], conversations: [], auditLogs: [] }
+  return { requests: [], messages: [], conversations: [], auditLogs: [], ...JSON.parse(await readFile(dbUrl, 'utf8')) }
 }
 async function writeDb(db) {
   await mkdir(dataDir, { recursive: true })
@@ -36,21 +36,22 @@ function cookieValue(request, name) {
   const cookies = request.headers.cookie?.split(';').map((item) => item.trim()) || []
   return cookies.find((item) => item.startsWith(`${name}=`))?.slice(name.length + 1)
 }
-function signedMiddlemanSession(user) {
-  const payload = Buffer.from(JSON.stringify({ userId: user.id, email: user.email, role: user.role, expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 })).toString('base64url')
+function signedSession(user) {
+  const payload = Buffer.from(JSON.stringify({ userId: user.id, username: user.username, displayName: user.displayName, email: user.email, role: user.role, avatar: user.avatar, avatarUrl: user.avatarUrl, verifiedMiddleman: user.verifiedMiddleman, createdAt: user.createdAt, expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 })).toString('base64url')
   const signature = createHmac('sha256', sessionSecret).update(payload).digest('base64url')
   return `${payload}.${signature}`
 }
-function verifyMiddlemanSession(token, db) {
+function verifySignedSession(token, db) {
   const [payload, signature] = String(token || '').split('.')
   if (!payload || !signature) return null
   const expected = createHmac('sha256', sessionSecret).update(payload).digest('base64url')
   if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null
   try {
     const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-    return session.expiresAt > Date.now() && ['middleman', 'admin'].includes(session.role)
-      ? db.users.find((user) => user.email === session.email && user.role === session.role) || db.users.find((user) => user.id === session.userId && user.role === session.role)
-      : null
+    if (session.expiresAt <= Date.now() || !['customer', 'middleman', 'admin'].includes(session.role)) return null
+    return db.users.find((user) => user.email === session.email && user.role === session.role)
+      || db.users.find((user) => user.id === session.userId && user.role === session.role)
+      || { id: session.userId, username: session.username, displayName: session.displayName, email: session.email, role: session.role, avatar: session.avatar, avatarUrl: session.avatarUrl, verifiedMiddleman: session.verifiedMiddleman, createdAt: session.createdAt }
   } catch { return null }
 }
 function send(response, status, body, headers = {}) {
@@ -68,7 +69,7 @@ async function body(request) {
 async function currentUser(request, db) {
   const token = cookieValue(request, 'gg_session')
   const session = db.sessions.find((item) => item.token === token && item.expiresAt > Date.now())
-  return session ? db.users.find((user) => user.id === session.userId) : verifyMiddlemanSession(token, db)
+  return session ? db.users.find((user) => user.id === session.userId) : verifySignedSession(token, db)
 }
 async function ensureMiddleman(db) {
   const email = process.env.MIDDLEMAN_EMAIL?.trim().toLowerCase()
@@ -92,6 +93,23 @@ function requestView(item, db) {
   const middleman = db.users.find((user) => user.id === item.middlemanId)
   const allowedAuthors = new Set([item.middlemanId, item.buyerId, item.sellerId].filter(Boolean))
   return { ...item, middleman: middleman ? safeUser(middleman) : null, buyer: buyer ? safeUser(buyer) : null, seller: seller ? safeUser(seller) : null, messages: db.messages.filter((message) => message.requestId === item.id && allowedAuthors.has(message.authorId)).map((message) => { const author = db.users.find((user) => user.id === message.authorId); return { ...message, authorName: author?.username || (message.system ? 'System' : 'Participant'), authorRole: author?.role || (message.system ? 'SYSTEM' : 'PARTICIPANT') } }) }
+}
+function privateConversationView(conversation, db) {
+  const participantIds = [conversation.customerId, conversation.middlemanId]
+  const customer = db.users.find((user) => user.id === conversation.customerId)
+  const middleman = db.users.find((user) => user.id === conversation.middlemanId)
+  return { ...conversation, customer: customer ? safeUser(customer) : null, middleman: middleman ? safeUser(middleman) : null, messages: db.messages.filter((message) => message.conversationId === conversation.id && participantIds.includes(message.authorId)).map((message) => { const author = db.users.find((user) => user.id === message.authorId); return { ...message, authorName: author?.username || 'Participant', authorRole: author?.role || 'customer' } }) }
+}
+function canViewConversation(conversation, user) { return Boolean(user && conversation && (conversation.customerId === user.id || conversation.middlemanId === user.id)) }
+function markMessagesRead(db, requestIds, userId) {
+  let changed = false
+  for (const message of db.messages) {
+    if ((requestIds.has(message.requestId) || requestIds.has(message.conversationId)) && message.authorId !== userId && !message.readBy?.includes(userId)) {
+      message.readBy = [...(message.readBy || []), userId]
+      changed = true
+    }
+  }
+  return changed
 }
 function addAudit(db, requestId, userId, action, detail) { db.auditLogs.push({ id: randomBytes(10).toString('hex'), requestId, userId, action, detail, createdAt: new Date().toISOString() }) }
 const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon' }
@@ -164,7 +182,7 @@ export const handler = async (request, response) => {
       const identity = String(input?.identity || input?.email || '').trim().toLowerCase()
       const user = db.users.find((item) => (item.email.toLowerCase() === identity || item.username.toLowerCase() === identity) && (item.role === 'middleman' || item.role === 'admin'))
       if (!user || !input?.password || !(await verifyPassword(input.password, user.passwordHash))) return send(response, 401, { error: 'Invalid middleman credentials.' })
-      const token = signedMiddlemanSession(user)
+      const token = signedSession(user)
       db.sessions.push({ token, userId: user.id, createdAt: Date.now(), expiresAt: Date.now() + sessionHours * 60 * 60 * 1000 }); await writeDb(db)
       return send(response, 200, { user: safeUser(user) }, { 'set-cookie': sessionCookie(token) })
     }
@@ -174,9 +192,48 @@ export const handler = async (request, response) => {
       const assigned = db.requests.filter((item) => item.middlemanId === user.id)
       return send(response, 200, { user: safeUser(user), stats: { pendingRequests: assigned.filter((item) => item.status === 'Open').length, activeTransactions: assigned.filter((item) => ['Accepted', 'Verification', 'In Progress'].includes(item.status)).length, completedTransactions: assigned.filter((item) => item.status === 'Completed').length, openDisputes: assigned.filter((item) => item.status === 'Disputed').length }, completedCount: assigned.filter((item) => item.status === 'Completed').length, averageRating: 'Not rated yet' })
     }
+    if (method === 'GET' && path === '/api/middleman/conversations') {
+      const user = await requireMiddleman(request, db)
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      return send(response, 200, { conversations: db.conversations.filter((conversation) => conversation.middlemanId === user.id).map((conversation) => privateConversationView(conversation, db)) })
+    }
+    if (method === 'POST' && path === '/api/conversations') {
+      const user = await currentUser(request, db)
+      const input = await body(request)
+      if (!user) return send(response, 401, { error: 'Authentication required.' })
+      const middleman = db.users.find((item) => item.id === input?.middlemanId && ['middleman', 'admin'].includes(item.role)) || db.users.find((item) => item.role === 'middleman')
+      if (!middleman) return send(response, 503, { error: 'No middleman is available.' })
+      const customerId = user.role === 'customer' ? user.id : input?.customerId
+      const existing = db.conversations.find((conversation) => conversation.customerId === customerId && conversation.middlemanId === middleman.id)
+      if (existing) return send(response, 200, { conversation: privateConversationView(existing, db) })
+      const conversation = { id: `DM-${randomBytes(8).toString('hex')}`, customerId, middlemanId: middleman.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+      db.conversations.push(conversation); await writeDb(db)
+      return send(response, 201, { conversation: privateConversationView(conversation, db) })
+    }
+    const conversationMatch = path.match(/^\/api\/conversations\/([^/]+)$/)
+    if (conversationMatch && method === 'GET') {
+      const user = await currentUser(request, db)
+      const conversation = db.conversations.find((item) => item.id === conversationMatch[1])
+      if (!canViewConversation(conversation, user)) return send(response, 403, { error: 'Private conversation access required.' })
+      if (markMessagesRead(db, new Set([conversation.id]), user.id)) await writeDb(db)
+      return send(response, 200, { conversation: privateConversationView(conversation, db) })
+    }
+    const conversationMessageMatch = path.match(/^\/api\/conversations\/([^/]+)\/messages$/)
+    if (conversationMessageMatch && method === 'POST') {
+      const user = await currentUser(request, db)
+      const conversation = db.conversations.find((item) => item.id === conversationMessageMatch[1])
+      const input = await body(request)
+      if (!canViewConversation(conversation, user)) return send(response, 403, { error: 'Private conversation access required.' })
+      if (!String(input?.body || '').trim()) return send(response, 400, { error: 'Message cannot be empty.' })
+      const message = { id: randomBytes(10).toString('hex'), conversationId: conversation.id, authorId: user.id, body: String(input.body).trim(), attachment: input?.attachment || null, system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
+      db.messages.push(message); conversation.updatedAt = message.createdAt; await writeDb(db)
+      return send(response, 201, { message })
+    }
     if (method === 'GET' && path === '/api/middleman/requests') {
       const user = await requireMiddleman(request, db)
-      return user ? send(response, 200, { requests: db.requests.filter((item) => item.middlemanId === user.id).map((item) => requestView(item, db)) }) : send(response, 403, { error: 'Middleman access required.' })
+      const assigned = db.requests.filter((item) => item.middlemanId === user?.id)
+      if (user && markMessagesRead(db, new Set(assigned.map((item) => item.id)), user.id)) await writeDb(db)
+      return user ? send(response, 200, { requests: assigned.map((item) => requestView(item, db)) }) : send(response, 403, { error: 'Middleman access required.' })
     }
     const requestMatch = path.match(/^\/api\/middleman\/requests\/([^/]+)$/)
     if (requestMatch && method === 'GET') {
@@ -209,6 +266,18 @@ export const handler = async (request, response) => {
       item[`${input.role}Id`] = participant.id; item.updatedAt = new Date().toISOString(); addAudit(db, item.id, user.id, 'participant_added', `${input.role} added: ${participant.username}`); await writeDb(db)
       return send(response, 200, { request: requestView(item, db) })
     }
+    const participantRemoveMatch = path.match(/^\/api\/middleman\/requests\/([^/]+)\/participants\/([^/]+)$/)
+    if (participantRemoveMatch && method === 'DELETE') {
+      const user = await requireMiddleman(request, db)
+      const item = db.requests.find((entry) => entry.id === participantRemoveMatch[1] && entry.middlemanId === user?.id)
+      if (!user) return send(response, 403, { error: 'Middleman access required.' })
+      if (!item) return send(response, 404, { error: 'Request not found.' })
+      if (![item.buyerId, item.sellerId].includes(participantRemoveMatch[2])) return send(response, 404, { error: 'Participant is not assigned.' })
+      if (item.buyerId === participantRemoveMatch[2]) item.buyerId = null
+      if (item.sellerId === participantRemoveMatch[2]) item.sellerId = null
+      item.updatedAt = new Date().toISOString(); addAudit(db, item.id, user.id, 'participant_removed', 'Participant removed from request'); await writeDb(db)
+      return send(response, 200, { request: requestView(item, db) })
+    }
     const messageMatch = path.match(/^\/api\/middleman\/requests\/([^/]+)\/messages$/)
     if (messageMatch && method === 'POST') {
       const user = await requireMiddleman(request, db)
@@ -217,7 +286,7 @@ export const handler = async (request, response) => {
       if (!user) return send(response, 403, { error: 'Middleman access required.' })
       if (!item) return send(response, 404, { error: 'Request not found.' })
       if (!String(input?.body || '').trim()) return send(response, 400, { error: 'Message cannot be empty.' })
-      const message = { id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: String(input.body).trim(), system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
+      const message = { id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: String(input.body).trim(), attachment: input?.attachment || null, system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
       db.messages.push(message); addAudit(db, item.id, user.id, 'message_sent', 'Middleman sent a chat message'); await writeDb(db)
       return send(response, 201, { message })
     }
@@ -229,7 +298,9 @@ export const handler = async (request, response) => {
     if (method === 'GET' && path === '/api/requests') {
       const user = await currentUser(request, db)
       if (!user) return send(response, 401, { error: 'Authentication required.' })
-      return send(response, 200, { requests: db.requests.filter((item) => item.requesterId === user.id || item.buyerId === user.id || item.sellerId === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((item) => requestView(item, db)) })
+      const accessible = db.requests.filter((item) => item.requesterId === user.id || item.buyerId === user.id || item.sellerId === user.id)
+      if (markMessagesRead(db, new Set(accessible.map((item) => item.id)), user.id)) await writeDb(db)
+      return send(response, 200, { requests: accessible.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((item) => requestView(item, db)) })
     }
     const customerMessageMatch = path.match(/^\/api\/requests\/([^/]+)\/messages$/)
     if (customerMessageMatch && method === 'POST') {
@@ -239,7 +310,7 @@ export const handler = async (request, response) => {
       if (!user) return send(response, 401, { error: 'Authentication required.' })
       if (!item) return send(response, 404, { error: 'Transaction not found.' })
       if (!String(input?.body || '').trim()) return send(response, 400, { error: 'Message cannot be empty.' })
-      const message = { id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: String(input.body).trim(), system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
+      const message = { id: randomBytes(10).toString('hex'), requestId: item.id, authorId: user.id, body: String(input.body).trim(), attachment: input?.attachment || null, system: false, createdAt: new Date().toISOString(), readBy: [user.id] }
       db.messages.push(message); addAudit(db, item.id, user.id, 'message_sent', 'Participant sent a chat message'); await writeDb(db)
       return send(response, 201, { message })
     }

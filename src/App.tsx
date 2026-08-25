@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { MiddlemanDashboard, MiddlemanProfile } from "./Middleman";
 import { Marketplace, SellAccount } from "./Marketplace";
+import heroArtwork from "./assets/hero.png";
 
 type User = {
   id: string;
@@ -16,11 +17,14 @@ type User = {
 };
 type Message = {
   id: number;
+  authorId?: string;
   author: string;
   role: string;
   body: string;
   time: string;
   system?: boolean;
+  readBy?: string[];
+  attachment?: { name: string; type: string; data: string } | null;
 };
 type RequestRecord = {
   id: string;
@@ -32,6 +36,12 @@ type RequestRecord = {
   middleman?: User | null;
   buyer?: User | null;
   seller?: User | null;
+  messages: Message[];
+};
+type PrivateConversation = {
+  id: string;
+  customer: User | null;
+  middleman: User | null;
   messages: Message[];
 };
 function CustomerAvatar({ initials, image, className = "avatar purple" }: { initials: string; image?: string; className?: string }) {
@@ -74,17 +84,25 @@ function App() {
         ? "Middleman Overview"
         : path === "/marketplace/sell"
           ? "Sell Your Account"
-          : path === "/marketplace"
+          : path === "/marketplace" || path.startsWith("/marketplace/listing/")
             ? "Marketplace"
             : "Overview",
   );
   const [mode, setMode] = useState<"buyer" | "seller">("buyer");
-  const [request, setRequest] = useState<RequestRecord | null>(null);
+  const [request, setRequest] = useState<RequestRecord | null>(() => {
+    try {
+      const saved = localStorage.getItem("gameguard-request-v2");
+      return saved ? (JSON.parse(saved) as RequestRecord) : null;
+    } catch {
+      return null;
+    }
+  });
   const [showRequest, setShowRequest] = useState(false);
   const [step, setStep] = useState(1);
   const [toast, setToast] = useState("");
   const [draft, setDraft] = useState("");
   const [profileMenu, setProfileMenu] = useState(false);
+  const [privateConversation, setPrivateConversation] = useState<PrivateConversation | null>(null);
   useEffect(() => {
     fetch("/api/auth/me")
       .then((r) => r.json())
@@ -150,8 +168,11 @@ function App() {
                 authorId: string;
                 authorName?: string;
                 authorRole?: string;
+                readBy?: string[];
+                attachment?: { name: string; type: string; data: string } | null;
               }) => ({
                 id: Date.parse(message.createdAt),
+                authorId: message.authorId,
                 author: message.system
                   ? "System"
                   : message.authorId === user.id
@@ -166,6 +187,8 @@ function App() {
                   minute: "2-digit",
                 }),
                 system: message.system,
+                readBy: message.readBy,
+                attachment: message.attachment,
               }),
             ),
           });
@@ -190,6 +213,9 @@ function App() {
         setUser={setUser}
       />
     );
+  if (["/how-it-works", "/safety", "/support", "/terms", "/privacy", "/refunds", "/acceptable-use"].includes(path)) {
+    return <InformationPage path={path} />;
+  }
   if (
     path.startsWith("/middleman") &&
     (!user || (user.role !== "middleman" && user.role !== "admin"))
@@ -219,6 +245,13 @@ function App() {
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
     window.location.assign("/");
+  };
+  const contactMiddleman = async () => {
+    const response = await fetch("/api/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}) });
+    if (!response.ok) return setToast("Middleman chat could not be opened");
+    const data = await response.json();
+    setPrivateConversation(data.conversation);
+    setViewState("Messages");
   };
   const openRequest = () =>
     user
@@ -379,13 +412,14 @@ function App() {
         ) : view === "Profile" ? (
           <ProfileView user={user} />
         ) : view === "My Transactions" || view === "Messages" ? (
-          request ? (
+          privateConversation && view === "Messages" ? <DirectMessages conversation={privateConversation} user={user} setConversation={setPrivateConversation} setToast={setToast} /> : request ? (
             <TransactionView
               request={request}
               draft={draft}
               setDraft={setDraft}
               setRequest={setRequest}
               setToast={setToast}
+              onContactMiddleman={contactMiddleman}
             />
           ) : (
             <EmptyTransaction onAction={openRequest} />
@@ -393,6 +427,7 @@ function App() {
         ) : (
           <PlaceholderView title={view} user={user} onAction={openRequest} />
         )}
+        <PublicFooter />
       </main>
       {showRequest && (
         <RequestModal
@@ -445,7 +480,7 @@ function Dashboard({
           <p className="eyebrow">SUNDAY, AUGUST 23, 2026</p>
           <h1>Good morning, {name}.</h1>
           <p className="subheading">
-            Manage your purchases, listings, and transactions from one place.
+            Manage your purchases, listings, and protected transactions from one place.
           </p>
         </div>
         <button className="primary-button" onClick={openRequest}>
@@ -513,13 +548,35 @@ function Dashboard({
         <div className="game-grid">
           {games.map(([name, short, tone, players]) => (
             <button className="game-card" key={name} onClick={openRequest}>
-              <div className={`game-art ${tone}`}>
+              <div className={`game-art ${tone}`} style={{ backgroundImage: `linear-gradient(180deg, #12203355, #080b10dd), url(${heroArtwork})` }}>
                 <span>{short}</span>
                 <em>↗</em>
               </div>
               <strong>{name}</strong>
               <small>{players}</small>
             </button>
+          ))}
+        </div>
+      </section>
+      <section className="trust-section">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">BUILT FOR CLARITY</p>
+            <h2>Why trade through GameGuard?</h2>
+            <p className="section-copy">Tools designed to make digital gaming transactions easier to understand and manage.</p>
+          </div>
+        </div>
+        <div className="trust-grid">
+          {[
+            ["🛡", "Protected transactions", "Transaction status and communication stay organized in one place."],
+            ["✓", "Seller reputation", "Review seller ratings and transaction history before purchasing."],
+            ["⚖", "Dispute support", "Issues can be reviewed through the platform's dispute process."],
+            ["🔒", "Secure communication", "Keep important transaction communication inside the platform."],
+          ].map(([icon, title, copy]) => (
+            <article className="trust-card" key={title}>
+              <span className="trust-icon">{icon}</span>
+              <div><h3>{title}</h3><p>{copy}</p></div>
+            </article>
           ))}
         </div>
       </section>
@@ -543,37 +600,32 @@ function BuyerSection({
   setView: (view: string) => void;
 }) {
   return (
-    <section className="market-section">
+    <section className="market-section active-transaction-section">
       <div className="section-title">
         <div>
-          <p className="eyebrow">BUYER</p>
-          <h2>Current purchases</h2>
+          <p className="eyebrow">ACTIVE TRANSACTION</p>
+          <h2>Current purchase</h2>
         </div>
         <button className="text-button" onClick={() => setView("My Purchases")}>
           View all →
         </button>
       </div>
       {request ? (
-        <div className="buyer-card">
+        <div className="buyer-card active-transaction-card">
           <div className="game-avatar red">VAL</div>
           <div className="buyer-info">
             <strong>{request.item}</strong>
-            <small>Seller: Maya Chen · {request.id}</small>
-            <div className="mini-progress">
-              <span />
-            </div>
-            <small className="progress-copy">Verification in progress</small>
+            <small>Seller: {request.seller?.displayName || request.seller?.username || "Seller pending"}</small>
+            <div className="transaction-meta-line"><span>Transaction</span><b>{request.id}</b></div>
           </div>
-          <strong className="card-price">{request.amount}</strong>
-          <span className="status-badge">
-            <i /> {request.status}
-          </span>
-          <button
-            className="outline-button compact-button"
-            onClick={() => setView("My Transactions")}
-          >
-            Open transaction
-          </button>
+          <div className="transaction-status-panel">
+            <span className="status-caption">CURRENT STATUS</span>
+            <strong><i /> {request.status === "Open" ? "Waiting for middleman acceptance" : `${request.status} in progress`}</strong>
+            <div className="transaction-progress">
+              {["Payment", "Delivery", "Verification", "Completed"].map((stage, index) => <span className={index < 2 ? "done" : index === 2 ? "current" : ""} key={stage}><i>{index < 2 ? "✓" : index === 2 ? "●" : "○"}</i>{stage}</span>)}
+            </div>
+          </div>
+          <div className="transaction-actions"><strong>{request.amount}</strong><button className="outline-button compact-button" onClick={() => setView("My Transactions")}>Open transaction</button></div>
         </div>
       ) : (
         <div className="empty-section">
@@ -821,6 +873,7 @@ function PlaceholderView({
         onRequest={onAction}
         onSell={() => window.location.assign("/marketplace/sell")}
         onToast={(message) => window.alert(message)}
+        authenticated={Boolean(user)}
       />
     );
   if (title === "Sell Your Account")
@@ -941,13 +994,62 @@ function GuestView() {
             onRequest={goLogin}
             onSell={goLogin}
             onToast={(message) => window.alert(message)}
+            authenticated={false}
           />
         ) : (
           <ReviewsView />
         )}
+        <PublicFooter />
       </main>
     </div>
   );
+}
+function PublicFooter() {
+  return <footer className="public-footer">
+    <div className="footer-brand"><div className="footer-brand-name"><span className="brand-mark">G</span><strong>GAMEGUARD</strong></div><p>A marketplace built for safer digital gaming transactions.</p><span className="footer-status"><i /> Platform operational</span></div>
+    <div><b>Platform</b><a href="/marketplace">Marketplace</a><a href="/how-it-works">How It Works</a><a href="/safety">Safety</a><a href="/support">Support</a></div>
+    <div><b>Legal</b><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/refunds">Refund Policy</a><a href="/acceptable-use">Acceptable Use</a></div>
+    <div className="footer-note"><span className="footer-kicker">GAMEGUARD / 2026</span><p>GameGuard is independent and is not affiliated with or endorsed by game publishers unless explicitly stated.</p></div>
+    <div className="footer-bottom-links"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/support">Support</a></div>
+  </footer>;
+}
+type InformationContent = { eyebrow: string; title: string; subtitle: string; sections: { title: string; body?: string; items?: string[] }[] };
+const informationContent: Record<string, InformationContent> = {
+  "/safety": { eyebrow: "SAFETY GUIDE", title: "Trade With More Confidence", subtitle: "Practical guidance for clearer, more accountable gaming transactions.", sections: [
+    { title: "Before Trading", items: ["Check seller reputation and available transaction history.", "Confirm the exact item, account details, and agreed price.", "Keep important communication inside the platform."] },
+    { title: "During the Transaction", items: ["Follow the transaction status shown in the room.", "Do not send payment outside the agreed process.", "Do not share unnecessary personal information.", "Do not bypass the middleman process."] },
+    { title: "After Delivery", items: ["Verify that the delivered item matches the agreement.", "Report problems promptly through the transaction process.", "Keep transaction records and relevant communication."] },
+    { title: "Common Red Flags", items: ["Pressure to trade outside the platform", "Requests for unusual payment methods", "A seller refusing to use the transaction process", "Suspicious links", "Requests for unrelated account credentials", "Unrealistic offers"] },
+  ] },
+  "/support": { eyebrow: "SUPPORT CENTER", title: "How Can We Help?", subtitle: "Find practical guidance for using the GameGuard marketplace and transaction workspace.", sections: [
+    { title: "Search help", body: "Use the topics below to find guidance for your transaction, marketplace activity, or account." },
+    { title: "Frequently Asked Questions", items: ["How do I request a middleman? Open the request flow from your dashboard and provide the transaction details.", "How do I contact a middleman? Open a transaction room and use Contact middleman to start a private conversation.", "Where should I discuss a transaction? Keep transaction details and relevant evidence in the protected room."] },
+    { title: "Transaction Help", body: "Review the transaction status, participants, and room messages. Contact the middleman from the room when coordination is needed." },
+    { title: "Marketplace Help", body: "Review listing details carefully and use the marketplace controls to browse or create listings." },
+    { title: "Account Help", body: "Use the account pages to sign in, recover access, and review your profile." },
+    { title: "Middleman Help", body: "Middlemen can review assigned requests, update statuses, manage participants, and communicate in request rooms." },
+    { title: "Payments & Refunds", body: "Review the Refund Policy for how transaction-related concerns are handled. GameGuard does not promise automatic refunds." },
+  ] },
+  "/terms": { eyebrow: "LEGAL", title: "Terms of Service", subtitle: "The terms that govern use of the GameGuard platform.", sections: ["Acceptance of Terms", "Eligibility", "Accounts", "Marketplace", "Transactions", "Middleman Services", "Fees", "Refunds", "Disputes", "Prohibited Activities", "Fraud and Abuse", "Account Suspension", "Third-Party Games", "Limitation of Liability", "Changes to Terms", "Contact"].map((title) => ({ title, body: `Use of GameGuard through ${title.toLowerCase()} is subject to applicable law, the platform's policies, and the information presented in the product. GameGuard does not guarantee that every transaction will succeed or that third-party game publishers permit account trading.` })) },
+  "/privacy": { eyebrow: "LEGAL", title: "Privacy Policy", subtitle: "How GameGuard handles information created through the application.", sections: [
+    { title: "Account information", body: "The application stores account details such as username, email address, password hash, role, avatar information, and account creation date." },
+    { title: "Transaction information", body: "Middleman requests include transaction details, participants, statuses, timestamps, audit activity, and related messages." },
+    { title: "Messages", body: "Messages sent in transaction rooms or private conversations are stored so authorized participants can access the relevant communication." },
+    { title: "Marketplace activity", body: "The application may store listing information and marketplace actions needed to provide the marketplace experience." },
+    { title: "Technical information", body: "The application uses session cookies to keep users signed in. Passwords are stored as hashes rather than plaintext passwords." },
+  ] },
+  "/refunds": { eyebrow: "LEGAL", title: "Refund Policy", subtitle: "How refund-related concerns are reviewed within the transaction process.", sections: [
+    { title: "When a refund may be considered", body: "A refund may be considered when transaction circumstances, available records, and the parties' communications support review. Refunds are not automatic and not every transaction is refundable." },
+    { title: "How to request a refund", body: "Keep the request and supporting details in the relevant transaction room, then contact the middleman so the issue can be reviewed through the platform process." },
+    { title: "Transaction-related disputes", body: "Disputes are reviewed using the transaction status, participant messages, and other information available in the room." },
+    { title: "Item not delivered", body: "Report non-delivery promptly and preserve the transaction record. The outcome depends on the facts available for review." },
+    { title: "Item does not match the listing", body: "Report the mismatch promptly with clear details. Do not assume that a report guarantees a refund or reversal." },
+  ] },
+  "/acceptable-use": { eyebrow: "LEGAL", title: "Acceptable Use Policy", subtitle: "Standards for responsible use of the GameGuard marketplace and transaction tools.", sections: [{ title: "Prohibited activities", items: ["Fraud or scams", "Account theft or attempts to obtain credentials", "Chargeback abuse", "Harassment or impersonation", "Manipulation of transactions or records", "Attempts to bypass GameGuard's transaction process", "Illegal activity", "Abuse of the platform, its users, or its support tools"] }, { title: "Responsible participation", body: "Use accurate account information, communicate respectfully, follow transaction instructions, and keep relevant activity inside the appropriate platform tools." }] },
+};
+function InformationPage({ path }: { path: string }) {
+  const content: InformationContent = path === "/how-it-works" ? { eyebrow: "PROCESS GUIDE", title: "How GameGuard Works", subtitle: "A simple step-by-step guide to completing a gaming transaction through a middleman.", sections: ["Create a Transaction", "Request a Middleman", "Middleman Joins", "Buyer Sends Payment", "Seller Delivers", "Buyer Verifies", "Transaction Completed"].map((title, index) => ({ title: `0${index + 1}  ${title}`, body: ["The buyer and seller agree on the item, price, and transaction details.", "The buyer or seller requests a GameGuard middleman for the transaction.", "An authorized middleman joins the transaction and confirms the participants and transaction details.", "The buyer follows the platform's available payment process.", "The seller provides the agreed item or account information through the transaction process.", "The buyer checks that the item matches the agreed transaction.", "Once the required parties confirm completion, the transaction is marked completed according to the platform's process."][index] })) } : informationContent[path];
+  return <div className="info-page-shell"><header className="info-header"><a className="info-brand" href="/"><span className="brand-mark">G</span><strong>GAMEGUARD</strong></a><nav><a href="/marketplace">Marketplace</a><a href="/how-it-works">How It Works</a><a href="/safety">Safety</a><a href="/support">Support</a></nav><a className="info-signin" href="/login">Sign In</a></header><main className="info-page"><div className="info-breadcrumb"><a href="/">Home</a><span>/</span>{content.eyebrow}</div><p className="eyebrow">{content.eyebrow}</p><h1>{content.title}</h1><p className="info-subtitle">{content.subtitle}</p>{path === "/how-it-works" && <div className="info-callout"><strong>What the middleman does</strong><p>Helps coordinate the transaction, keeps communication organized, tracks status, helps participants follow the agreed process, and can assist with disputes according to the platform's capabilities.</p></div>}<div className="info-sections">{content.sections.map((section) => <section className="info-section" key={section.title}><h2>{section.title}</h2>{section.body && <p>{section.body}</p>}{section.items && <ul>{section.items.map((item) => <li key={item}>{item}</li>)}</ul>}</section>)}</div>{path === "/how-it-works" && <div className="info-important"><strong>Important</strong><p>GameGuard does not guarantee that every transaction will be successful or that every game publisher permits account trading. Users are responsible for following the applicable game's Terms of Service and GameGuard's policies.</p><div><a className="primary-button" href="/marketplace">Browse Marketplace</a><a className="secondary-info-button" href="/login?next=/dashboard">Request a Middleman</a></div></div>}{path === "/support" && <div className="info-support-note"><strong>Still need help?</strong><p>For transaction-specific help, sign in and use the transaction room's messaging tools so the relevant context stays together.</p><a className="primary-button" href="/login?next=/dashboard">Open GameGuard</a></div>}</main><PublicFooter /></div>;
 }
 function AuthPage({
   mode,
@@ -1161,26 +1263,89 @@ function TransactionView({
   setDraft,
   setRequest,
   setToast,
+  onContactMiddleman,
 }: {
   request: RequestRecord;
   draft: string;
   setDraft: (value: string) => void;
   setRequest: React.Dispatch<React.SetStateAction<RequestRecord | null>>;
   setToast: (value: string) => void;
+  onContactMiddleman: () => void;
 }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState("");
+  const [attachment, setAttachment] = useState("");
+  const [attachmentData, setAttachmentData] = useState<{ name: string; type: string; data: string } | null>(null);
+  const [sending, setSending] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [showNewMessages, setShowNewMessages] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const messageListRef = useRef<HTMLDivElement>(null);
   const waiting = request.status === "Open";
-  const statusLabel = waiting
-    ? "Waiting for middleman acceptance"
-    : request.status;
+  const statusLabel = waiting ? "Awaiting acceptance" : request.status;
+  const middleman = request.middleman;
+  const seller = request.seller;
+  const buyer = request.buyer;
+  const messages = request.messages;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLoadingMessages(false), 450);
+    return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    if (loadingMessages || !messageListRef.current) return;
+    const list = messageListRef.current;
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+    if (!atBottom && messages.length > 1) setShowNewMessages(true);
+  }, [messages.length, loadingMessages]);
+  const scrollToBottom = () => {
+    messageListRef.current?.scrollTo({ top: messageListRef.current.scrollHeight, behavior: "smooth" });
+    setShowNewMessages(false);
+    setShowScrollButton(false);
+  };
+  const selectAttachment = (file?: File) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMessage("Attachments must be smaller than 5 MB.");
+      return;
+    }
+    setAttachment(file.name);
+    setAttachmentData(null);
+    setUploadProgress(0);
+    const reader = new FileReader();
+    reader.onload = () => setAttachmentData({ name: file.name, type: file.type, data: String(reader.result || "") });
+    reader.onerror = () => setErrorMessage("This attachment could not be read. Please try again.");
+    reader.readAsDataURL(file);
+    setUploadProgress(12);
+    const timer = window.setInterval(() => {
+      setUploadProgress((current) => {
+        if (current >= 100) { window.clearInterval(timer); return 100; }
+        return Math.min(current + 22, 100);
+      });
+    }, 120);
+  };
+  const attachmentReady = !attachment || (uploadProgress >= 100 && Boolean(attachmentData));
+  const timeline = [
+    ["Transaction Created", true],
+    ["Payment Secured", !waiting],
+    ["Seller Delivering", ["Verification", "In Progress", "Completed"].includes(request.status)],
+    ["Buyer Verification", ["In Progress", "Completed"].includes(request.status)],
+    ["Completed", request.status === "Completed"],
+  ];
   const send = async () => {
-    if (!draft.trim()) return;
-    const body = draft.trim();
+    if ((!draft.trim() && !attachmentData) || sending || !attachmentReady) return;
+    const body = draft.trim() || "Shared an attachment.";
+    setSending(true);
     const response = await fetch(`/api/requests/${request.id}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body, attachment: attachmentData }),
     });
-    if (!response.ok) return setToast("Message could not be sent");
+    setSending(false);
+    if (!response.ok) { setSending(false); setErrorMessage("Your message could not be sent. Check your connection and try again."); return; }
     setRequest((current) =>
       current
         ? {
@@ -1189,6 +1354,7 @@ function TransactionView({
               ...current.messages,
               {
                 id: Date.now(),
+                authorId: "self",
                 author: "You",
                 role: "SELLER",
                 body,
@@ -1196,126 +1362,115 @@ function TransactionView({
                   hour: "numeric",
                   minute: "2-digit",
                 }),
+                readBy: [],
+                attachment: attachmentData,
               },
             ],
           }
         : current,
     );
     setDraft("");
-    setToast("Message sent");
+    setAttachment("");
+    setAttachmentData(null);
+    setUploadProgress(0);
+    setErrorMessage("");
   };
+  const confirmAction = () => {
+    if (!pendingAction) return;
+    setToast(`${pendingAction} request sent to the transaction room`);
+    setPendingAction("");
+  };
+  const participant = (name: string, role: string, avatar: string, image?: string) => (
+    <div className="escrow-person" key={role}>
+      <div className="escrow-avatar-wrap">
+        <CustomerAvatar initials={avatar} image={image} className="avatar escrow-avatar" />
+        <span className="presence-dot" />
+      </div>
+      <div><strong>{name}</strong><small>{role}</small></div>
+      {role === "MIDDLEMAN" && <span className="verified-mark">✓</span>}
+    </div>
+  );
   return (
-    <section className="transaction-view">
-      <div className="page-heading compact">
-        <div>
-          <p className="eyebrow">TRANSACTION ROOM</p>
-          <h1>{request.id}</h1>
-        </div>
-        <span className="status-badge large">
-          <i /> {statusLabel}
-        </span>
+    <section className="transaction-view escrow-view">
+      <div className="escrow-topline">
+        <div><p className="eyebrow">SECURE TRANSACTION ROOM</p><h1>{request.id}</h1></div>
+        <button className="drawer-trigger" onClick={() => setDrawerOpen(true)}>Transaction <span>→</span></button>
       </div>
-      <div className="room-grid">
-        <aside className="room-details panel">
-          <div className="panel-title">
-            <h3>Transaction details</h3>
-          </div>
-          <div className="detail-game">
-            <div className="game-avatar red">VAL</div>
-            <div>
-              <strong>{request.game}</strong>
-              <small>{request.item}</small>
-            </div>
-          </div>
-          {[
-            ["Amount", request.amount],
-            ["Created", request.created],
-            ["Role", "SELLER"],
-          ].map(([label, value]) => (
-            <div className="detail-row" key={label}>
-              <span>{label}</span>
-              <strong>{value}</strong>
-            </div>
-          ))}
+      <div className="escrow-layout">
+        <aside className="conversation-rail">
+          <div className="rail-heading"><div><p className="eyebrow">CONVERSATIONS</p><strong>Transaction inbox</strong></div><span className="inbox-count">1</span></div>
+          <label className="conversation-search"><span>⌕</span><input placeholder="Search conversations" /></label>
+          <p className="rail-label">RECENT</p>
+          <button className="conversation active">
+            <div className="conversation-avatar"><CustomerAvatar initials={middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar" /><span /></div>
+            <div className="conversation-copy"><strong>{middleman?.displayName || "MysticMM"}</strong><small>{messages[messages.length - 1]?.body || "Transaction room created."}</small><em>{request.id}</em></div>
+            <time>{messages[messages.length - 1]?.time || "Now"}</time><b>2</b>
+          </button>
+          <div className="rail-empty"><span>⌁</span><small>Protected conversations<br />appear here.</small></div>
         </aside>
-        <div className="chat panel">
-          <div className="chat-header">
-            <div>
-              <h3>Transaction chat</h3>
-              <span>
-                <i />{" "}
-                {waiting
-                  ? "Waiting for middleman"
-                  : "Transaction participants"}{" "}
-              </span>
-            </div>
+        <main className="escrow-chat">
+          <header className="escrow-chat-header">
+            <div className="conversation-avatar"><CustomerAvatar initials={middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar" /><span /></div>
+            <div><h2>{middleman?.displayName || "MysticMM"} <i className="verified-mark">✓</i></h2><p><span className="presence-dot" /> Online · <b>{request.id}</b></p></div>
+            <div className="header-actions"><span className="protected-badge">🛡 Protected Transaction</span><button onClick={() => setMenuOpen(!menuOpen)} aria-label="Conversation menu">•••</button>{menuOpen && <div className="chat-menu"><button onClick={() => setToast("Transaction link copied")}>Copy transaction link</button><button onClick={() => setToast("Conversation reported")}>Report conversation</button></div>}</div>
+          </header>
+          <div className="transaction-banner"><div className="shield-icon">🛡</div><div><span>PROTECTED TRANSACTION</span><strong>{request.id} · {request.game}</strong><small>{request.item}</small></div><strong className="banner-amount">{request.amount}</strong><button onClick={() => setDrawerOpen(true)}>View transaction</button></div>
+          <div className="message-list escrow-messages" ref={messageListRef} onScroll={(event) => { const list = event.currentTarget; const away = list.scrollHeight - list.scrollTop - list.clientHeight > 48; setShowScrollButton(away); if (!away) setShowNewMessages(false); }}>
+            {loadingMessages ? <div className="message-skeleton" aria-label="Loading messages"><span /><span /><span /><span /><span /></div> : messages.length === 0 ? <div className="empty-conversation"><div>🛡</div><strong>Your protected room is ready</strong><p>Start the conversation with the transaction participants.</p></div> : <><div className="unread-divider"><span>UNREAD MESSAGES</span></div>{messages.map((message, index) => {
+              const previous = messages[index - 1];
+              const grouped = Boolean(previous && !previous.system && previous.author === message.author && previous.role === message.role);
+              if (message.system) return <div className="event-message" key={message.id}><span className="event-rule" /><div><strong>{message.body.includes("status changed") ? "Transaction update" : "Transaction created"}</strong><p>{message.body}</p></div><span className="event-rule" /></div>;
+              const official = message.role === "MIDDLEMAN";
+              return <div className={`escrow-message ${official ? "official" : message.author === "You" ? "from-me" : "from-them"} ${grouped ? "grouped" : ""}`} key={message.id}>{!grouped && <CustomerAvatar initials={official ? "MM" : message.author.slice(0, 2).toUpperCase()} image={official ? "/avatars/mysticmm-customer.svg" : undefined} className="avatar tiny purple" />}<div className="bubble-stack">{!grouped && <div className="message-meta"><strong>{official && "🛡 "}{message.author}</strong>{official && <span className="middleman-label">MIDDLEMAN</span>}<time>{message.time}</time></div>}<div className="escrow-bubble"><p>{message.body}</p>{message.attachment && <a className="message-attachment" href={message.attachment.data} download={message.attachment.name}>{message.attachment.type.startsWith("image/") && <img src={message.attachment.data} alt={message.attachment.name} />}<span>📎 {message.attachment.name}</span></a>}<div className="bubble-tools"><button onClick={() => navigator.clipboard?.writeText(message.body)}>Copy</button><button onClick={() => setDraft(`Replying to ${message.author}: `)}>Reply</button>{message.author === "You" && <button onClick={() => setToast("Your message can no longer be deleted")}>Delete</button>}</div></div>{message.author === "You" && <small className="read-state">{message.readBy?.some((id) => id !== message.authorId) ? "Seen ✓✓" : "Sent ✓"}</small>}</div></div>;
+            })}</>}
+            {showNewMessages && <button className="new-message-indicator" onClick={scrollToBottom}>New messages <span>↓</span></button>}
+            {showScrollButton && <button className="scroll-bottom-button" onClick={scrollToBottom} aria-label="Scroll to latest messages">↓</button>}
           </div>
-          <div className="message-list">
-            {request.messages.map((message) =>
-              message.system ? (
-                <div className="system-message" key={message.id}>
-                  <span>✦</span>
-                  {message.body}
-                </div>
-              ) : (
-                <div className="message" key={message.id}>
-                  <CustomerAvatar initials={message.role === "MIDDLEMAN" ? "MM" : message.author.slice(0, 2).toUpperCase()} image={message.role === "MIDDLEMAN" ? "/avatars/mysticmm-customer.svg" : undefined} className="avatar tiny purple" />
-                  <div>
-                    <div className="message-meta">
-                      <strong>{message.author}</strong>
-                      <span className="role buyer">{message.role}</span>
-                      <time>{message.time}</time>
-                    </div>
-                    <p>{message.body}</p>
-                  </div>
-                </div>
-              ),
-            )}
-          </div>
-          <div className="composer">
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Type a message..."
-            />
-            <button className="send" onClick={send}>
-              ↑
-            </button>
-          </div>
-        </div>
-        <aside className="participants panel">
-          <div className="panel-title">
-            <h3>Participants</h3>
-          </div>
-          {[
-            [
-              waiting
-                ? "Waiting for middleman acceptance"
-                : request.middleman?.displayName || "MysticMM",
-              "MIDDLEMAN",
-              waiting ? "?" : request.middleman?.avatar || "MM",
-            ],
-            [
-              request.buyer?.displayName || "Waiting for buyer assignment",
-              "BUYER",
-              request.buyer?.avatar || "?",
-            ],
-            [request.seller?.displayName || "You", "SELLER", request.seller?.avatar || "YO"],
-          ].map(([name, role, avatar]) => (
-            <div className="participant" key={role}>
-              <CustomerAvatar initials={avatar} image={role === "MIDDLEMAN" && !waiting ? "/avatars/mysticmm-customer.svg" : undefined} />
-              <div>
-                <strong>{name}</strong>
-                <small>{role}</small>
-              </div>
-              <span className="online-dot" />
-            </div>
-          ))}
+          {errorMessage && <div className="chat-error"><span>!</span>{errorMessage}<button onClick={() => setErrorMessage("")}>Dismiss</button></div>}
+          <div className="escrow-composer" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectAttachment(event.dataTransfer.files[0]); }}>
+            <div className="composer-row"><label className="attach-button" title="Attach file">📎<input type="file" accept="image/*,.pdf,.txt,.zip" onChange={(event) => selectAttachment(event.target.files?.[0])} /></label><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Message the transaction participants..." rows={1} /><button className="emoji-button" onClick={() => setEmojiOpen(!emojiOpen)}>😊</button><button className="send" onClick={send} disabled={sending || !attachmentReady}>{sending ? "..." : "➤"}</button></div>{emojiOpen && <div className="emoji-popover"><button onClick={() => { setDraft(`${draft} 👍`); setEmojiOpen(false) }}>👍</button><button onClick={() => { setDraft(`${draft} ✅`); setEmojiOpen(false) }}>✅</button><button onClick={() => { setDraft(`${draft} 🎮`); setEmojiOpen(false) }}>🎮</button></div>}{attachment && <div className="attachment-chip">📎 {attachment}<span className="upload-track"><i style={{ width: `${uploadProgress}%` }} /></span><small>{uploadProgress < 100 || !attachmentData ? `Preparing ${uploadProgress}%` : "Ready to attach"}</small><button onClick={() => { setAttachment(""); setAttachmentData(null); setUploadProgress(0); }}>×</button></div>}<div className="security-line">🔒 <span><strong>Keep your transaction communication here.</strong> Never share passwords, recovery codes, payment credentials, or other sensitive information.</span></div></div>
+        </main>
+        <aside className={`transaction-drawer ${drawerOpen ? "open" : ""}`}>
+          <div className="drawer-head"><div><p className="eyebrow">TRANSACTION</p><h2>{request.id}</h2></div><button onClick={() => setDrawerOpen(false)}>×</button></div>
+          <div className="transaction-item"><div className="game-avatar red">VAL</div><div><span>ITEM</span><strong>{request.item}</strong><small>{request.game}</small></div></div>
+          <div className="amount-row"><span>Amount</span><strong>{request.amount}</strong></div><div className="status-card"><span>Current status</span><strong><i /> {statusLabel}</strong></div>
+          <div className="people-block"><p className="eyebrow">PARTICIPANTS</p>{buyer && participant(buyer.displayName || buyer.username, "BUYER · VERIFIED", buyer.avatar || "BU")} {seller && participant(seller.displayName || seller.username, "SELLER · VERIFIED", seller.avatar || "SE")} {participant(middleman?.displayName || "MysticMM", "MIDDLEMAN · AUTHORIZED", middleman?.avatar || "MM", "/avatars/mysticmm-customer.svg")}</div>
+          <div className="timeline"><p className="eyebrow">TRANSACTION TIMELINE</p>{timeline.map(([label, done], index) => <div className={`${done ? "done" : index === timeline.findIndex((item) => !item[1]) ? "current" : ""}`} key={String(label)}><span>{done ? "✓" : index === timeline.findIndex((item) => !item[1]) ? "●" : "○"}</span><strong>{label}</strong></div>)}</div>
+          <div className="action-stack"><button onClick={onContactMiddleman}>Contact middleman</button></div>
         </aside>
       </div>
+      {pendingAction && <div className="modal-backdrop action-confirm"><div className="request-modal"><button className="close-button" onClick={() => setPendingAction("")}>×</button><div className="confirm-content"><div className="confirm-icon">🛡</div><h2>{pendingAction}?</h2><p>This action will be recorded in the protected transaction timeline.</p><button className="primary-button" onClick={confirmAction}>Confirm action</button><button className="text-button" onClick={() => setPendingAction("")}>Cancel</button></div></div></div>}
     </section>
   );
+}
+
+function DirectMessages({
+  conversation,
+  user,
+  setConversation,
+  setToast,
+}: {
+  conversation: PrivateConversation;
+  user: User;
+  setConversation: (conversation: PrivateConversation) => void;
+  setToast: (message: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    const refresh = () => fetch(`/api/conversations/${conversation.id}`).then((response) => response.ok ? response.json() : null).then((data) => data?.conversation && setConversation(data.conversation)).catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [conversation.id]);
+  const send = async () => {
+    if (!draft.trim()) return;
+    const response = await fetch(`/api/conversations/${conversation.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: draft.trim() }) });
+    if (!response.ok) return setToast("Message could not be sent");
+    const data = await response.json();
+    setConversation({ ...conversation, messages: [...conversation.messages, { id: Date.now(), authorId: user.id, author: "You", role: user.role, body: data.message.body, time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), readBy: [user.id] }] });
+    setDraft("");
+  };
+  return <section className="transaction-view escrow-view"><div className="escrow-topline"><div><p className="eyebrow">PRIVATE MIDDLEMAN MESSAGES</p><h1>{conversation.middleman?.displayName || "Middleman"}</h1></div></div><div className="escrow-layout direct-message-layout"><aside className="conversation-rail"><div className="rail-heading"><div><p className="eyebrow">CONVERSATIONS</p><strong>Private messages</strong></div></div><button className="conversation active"><div className="conversation-avatar"><CustomerAvatar initials={conversation.middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar" /><span /></div><div className="conversation-copy"><strong>{conversation.middleman?.displayName || "Middleman"}</strong><small>Private transaction support</small><em>{conversation.id}</em></div></button></aside><main className="escrow-chat"><header className="escrow-chat-header"><div className="conversation-avatar"><CustomerAvatar initials={conversation.middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar" /><span /></div><div><h2>{conversation.middleman?.displayName || "Middleman"} <i className="verified-mark">✓</i></h2><p><span className="presence-dot" /> Private conversation</p></div><span className="protected-badge">🔒 Private</span></header><div className="message-list escrow-messages">{conversation.messages.length ? conversation.messages.map((message) => <div className={`escrow-message ${message.authorId === user.id ? "from-me" : "from-them"}`} key={message.id}><CustomerAvatar initials={message.authorId === user.id ? user.avatar : conversation.middleman?.avatar || "MM"} image={message.authorId === user.id ? undefined : "/avatars/mysticmm-customer.svg"} className="avatar tiny purple" /><div className="bubble-stack"><div className="message-meta"><strong>{message.authorId === user.id ? "You" : conversation.middleman?.displayName || "Middleman"}</strong><time>{message.time}</time></div><div className="escrow-bubble"><p>{message.body}</p></div><small className="read-state">{message.authorId === user.id ? "Sent ✓" : ""}</small></div></div>) : <div className="empty-conversation"><div>🔒</div><strong>Private conversation ready</strong><p>Contact your authorized middleman here.</p></div>}</div><div className="escrow-composer"><div className="composer-row"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Message your middleman..." rows={1} /><button className="send" onClick={send}>➤</button></div><div className="security-line">🔒 Keep transaction communication in GameGuard.</div></div></main><aside className="transaction-drawer open"><div className="drawer-head"><div><p className="eyebrow">PRIVATE CHAT</p><h2>{conversation.id}</h2></div></div><div className="people-block"><p className="eyebrow">PARTICIPANTS</p><div className="escrow-person"><CustomerAvatar initials={user.avatar} className="avatar escrow-avatar" /><div><strong>{user.displayName || user.username}</strong><small>CUSTOMER</small></div></div><div className="escrow-person"><CustomerAvatar initials={conversation.middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar escrow-avatar" /><div><strong>{conversation.middleman?.displayName || "Middleman"}</strong><small>AUTHORIZED MIDDLEMAN</small></div></div></div></aside></div></section>;
 }
 
 function RequestModal({

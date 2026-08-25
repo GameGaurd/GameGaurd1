@@ -26,6 +26,8 @@ type Message = {
   authorId: string;
   authorName?: string;
   authorRole?: string;
+  attachment?: { name: string; type: string; data: string } | null;
+  readBy?: string[];
 };
 type RequestRecord = {
   id: string;
@@ -36,6 +38,12 @@ type RequestRecord = {
   createdAt: string;
   buyer: User | null;
   seller: User | null;
+  messages: Message[];
+};
+type PrivateConversation = {
+  id: string;
+  customer: User | null;
+  middleman: User | null;
   messages: Message[];
 };
 const items = [
@@ -104,6 +112,8 @@ export function MiddlemanDashboard({
   const [selected, setSelected] = useState<RequestRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [privateConversations, setPrivateConversations] = useState<PrivateConversation[]>([]);
+  const [privateSelected, setPrivateSelected] = useState<PrivateConversation | null>(null);
   const load = async () => {
     setLoading(true);
     try {
@@ -137,6 +147,10 @@ export function MiddlemanDashboard({
   useEffect(() => {
     load();
   }, []);
+  useEffect(() => {
+    if (section !== "Messages") return;
+    fetch("/api/middleman/conversations").then((response) => response.ok ? response.json() : { conversations: [] }).then((data) => setPrivateConversations(data.conversations || [])).catch(() => setPrivateConversations([]));
+  }, [section]);
   useEffect(() => {
     if (section !== "Transaction" || !selected) return;
     const timer = window.setInterval(() => refreshRequest(selected.id), 3000);
@@ -253,6 +267,8 @@ export function MiddlemanDashboard({
             onStatus={updateStatus}
             onRefresh={refreshRequest}
           />
+        ) : section === "Messages" ? (
+          <PrivateMessages conversations={privateConversations} selected={privateSelected} onSelect={setPrivateSelected} onRefresh={() => setSection("Messages")} user={user} />
         ) : section === "Profile" ? (
           <MiddlemanProfile user={user} />
         ) : section === "Audit Logs" ? (
@@ -433,6 +449,7 @@ function RequestTable({
     </div>
   );
 }
+/*
 function Transaction({
   request,
   user,
@@ -452,84 +469,24 @@ function Transaction({
     "buyer",
   );
   const [participantError, setParticipantError] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [attachment, setAttachment] = useState<{ name: string; type: string; data: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
   const send = async () => {
-    if (!draft.trim()) return;
-    await fetch(`/api/middleman/requests/${request.id}/messages`, {
+    if ((!draft.trim() && !attachment) || uploading) return;
+    const response = await fetch(`/api/middleman/requests/${request.id}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ body: draft }),
+      body: JSON.stringify({ body: draft.trim() || "Shared an attachment.", attachment }),
     });
+    if (!response.ok) return;
     setDraft("");
-    onRefresh();
-  };
-  const addParticipant = async () => {
-    setParticipantError("");
-    const response = await fetch(
-      `/api/middleman/requests/${request.id}/participants`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          username: participantUsername,
-          role: participantRole,
-        }),
-      },
-    );
-    const data = await response.json();
-    if (!response.ok)
-      return setParticipantError(
-        data.error || "Participant could not be added.",
-      );
-    setParticipantUsername("");
-    onRefresh();
-  };
-  return (
-    <section className="mm-transaction">
-      <button className="mm-back" onClick={onBack}>
-        ← Back to requests
-      </button>
-      <div className="mm-transaction-grid">
-        <div className="mm-panel panel">
-          <p className="eyebrow">TRANSACTION DETAILS</p>
-          <h2>{request.id}</h2>
-          <div className="mm-detail">
-            <span>Game</span>
-            <strong>{request.game}</strong>
-            <span>Item</span>
-            <strong>{request.item}</strong>
-            <span>Amount</span>
-            <strong>{request.amount}</strong>
-            <span>Created</span>
-            <strong>{formatDate(request.createdAt)}</strong>
-            <span>Status</span>
-            <strong>{request.status}</strong>
-          </div>
-          <div className="mm-controls">
-            {statuses.map((status) => (
-              <button
-                className={request.status === status ? "selected" : ""}
-                key={status}
-                onClick={() => onStatus(request, status)}
-              >
-                {status}
-              </button>
-            ))}
-            <button
-              className="danger"
-              onClick={() => onStatus(request, "Disputed")}
-            >
-              Open dispute
-            </button>
-          </div>
-        </div>
-        <div className="mm-panel panel mm-chat">
-          <div className="mm-panel-head">
-            <div>
-              <p className="eyebrow">REAL-TIME CHAT</p>
-              <h2>Transaction room</h2>
-            </div>
-            <span className="mm-live">● Live</span>
-          </div>
+    <section className="transaction-view escrow-view mm-escrow-view">
+      <div className="escrow-topline"><div><button className="mm-back" onClick={onBack}>← Back to requests</button><p className="eyebrow">SECURE TRANSACTION ROOM</p><h1>{request.id}</h1></div><button className="drawer-trigger" onClick={() => setDrawerOpen(true)}>Transaction <span>→</span></button></div>
+      <div className="escrow-layout">
+        <aside className="conversation-rail"><div className="rail-heading"><div><p className="eyebrow">CONVERSATIONS</p><strong>Transaction inbox</strong></div><span className="inbox-count">1</span></div><label className="conversation-search"><span>⌕</span><input placeholder="Search conversations" /></label><p className="rail-label">RECENT</p><button className="conversation active"><div className="conversation-avatar"><Avatar user={user} className="avatar" /><span /></div><div className="conversation-copy"><strong>Transaction team</strong><small>{request.messages[request.messages.length - 1]?.body || "Transaction room created."}</small><em>{request.id}</em></div><time>Live</time></button></aside>
+        <main className="escrow-chat"><header className="escrow-chat-header"><div className="conversation-avatar"><Avatar user={user} className="avatar" /><span /></div><div><h2>Transaction team <i className="verified-mark">✓</i></h2><p><span className="presence-dot" /> Live · <b>{request.id}</b></p></div><span className="protected-badge">🛡 Protected Transaction</span></header><div className="transaction-banner"><div className="shield-icon">🛡</div><div><span>PROTECTED TRANSACTION</span><strong>{request.id} · {request.game}</strong><small>{request.item}</small></div><strong className="banner-amount">{request.amount}</strong><button onClick={() => setDrawerOpen(true)}>View transaction</button></div><div className="message-list escrow-messages">{request.messages.map((message) => message.system ? <div className="event-message" key={message.id}><span className="event-rule" /><div><strong>Transaction update</strong><p>{message.body}</p></div><span className="event-rule" /></div> : <div className={`escrow-message ${message.authorId === user.id ? "from-me" : message.authorRole === "MIDDLEMAN" ? "official" : "from-them"}`} key={message.id}><Avatar user={message.authorId === user.id ? user : request.buyer?.id === message.authorId ? request.buyer : request.seller || user} className="avatar tiny purple" /><div className="bubble-stack"><div className="message-meta"><strong>{message.authorId === user.id ? "You" : message.authorName || "Participant"}</strong>{message.authorRole === "MIDDLEMAN" && <span className="middleman-label">MIDDLEMAN</span>}<time>{formatDate(message.createdAt)}</time></div><div className="escrow-bubble"><p>{message.body}</p>{message.attachment && <a className="message-attachment" href={message.attachment.data} download={message.attachment.name}>{message.attachment.type.startsWith("image/") && <img src={message.attachment.data} alt={message.attachment.name} />}<span>📎 {message.attachment.name}</span></a>}</div>{message.authorId === user.id && <small className="read-state">{message.readBy?.some((id) => id !== message.authorId) ? "Seen ✓✓" : "Sent ✓"}</small>}</div></div>)}<div className="typing-indicator"><span /><span /><span /> Customer is typing</div></div><div className="mm-composer escrow-composer"><div className="composer-row"><label className="attach-button" title="Attach file">📎<input type="file" accept="image/*,.pdf,.txt,.zip" onChange={(event) => selectAttachment(event.target.files?.[0])} /></label><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Message the transaction participants..." rows={1} /><button className="emoji-button">😊</button><button className="send" onClick={send} disabled={uploading}>{uploading ? "..." : "➤"}</button></div>{attachment && <div className="attachment-chip">📎 {attachment.name}<button onClick={() => setAttachment(null)}>×</button></div>}<div className="security-line">🔒 <span><strong>Keep your transaction communication here.</strong> Never share passwords, recovery codes, payment credentials, or other sensitive information.</span></div></div></main>
+        <aside className={`transaction-drawer ${drawerOpen ? "open" : ""}`}><div className="drawer-head"><div><p className="eyebrow">TRANSACTION</p><h2>{request.id}</h2></div><button onClick={() => setDrawerOpen(false)}>×</button></div><div className="transaction-item"><div className="game-avatar red">VAL</div><div><span>ITEM</span><strong>{request.item}</strong><small>{request.game}</small></div></div><div className="amount-row"><span>Amount</span><strong>{request.amount}</strong></div><div className="status-card"><span>Current status</span><strong><i /> {request.status}</strong></div><div className="people-block"><p className="eyebrow">PARTICIPANTS</p><div className="escrow-person"><Avatar user={user} className="avatar escrow-avatar" /><div><strong>{user.displayName || user.username}</strong><small>MIDDLEMAN · AUTHORIZED</small></div><span className="verified-mark">✓</span></div><div className="escrow-person"><Avatar user={request.buyer} className="avatar escrow-avatar" /><div><strong>{request.buyer?.username || "Buyer not assigned"}</strong><small>BUYER · VERIFIED</small></div></div><div className="escrow-person"><Avatar user={request.seller} className="avatar escrow-avatar" /><div><strong>{request.seller?.username || "Seller not assigned"}</strong><small>SELLER · VERIFIED</small></div></div></div><div className="timeline"><p className="eyebrow">TRANSACTION TIMELINE</p>{["Transaction Created", "Payment Secured", "Seller Delivering", "Buyer Verification", "Completed"].map((label, index) => <div className={index < 2 ? "done" : index === 2 ? "current" : ""} key={label}><span>{index < 2 ? "✓" : index === 2 ? "●" : "○"}</span><strong>{label}</strong></div>)}</div><div className="action-stack">{statuses.map((status) => <button className={request.status === status ? "primary-button" : ""} key={status} onClick={() => onStatus(request, status)}>{status}</button>)}<button onClick={() => onStatus(request, "Disputed")}>Open dispute</button><div className="mm-add-participant"><select value={participantRole} onChange={(event) => setParticipantRole(event.target.value as "buyer" | "seller")}><option value="buyer">Buyer</option><option value="seller">Seller</option></select><input value={participantUsername} onChange={(event) => setParticipantUsername(event.target.value)} placeholder="Username" /><button onClick={addParticipant}>Add</button>{participantError && <small>{participantError}</small>}</div></div></aside>
           <div className="mm-messages">
             {request.messages.map((message) => (
               <div
@@ -545,18 +502,21 @@ function Transaction({
                       : `${message.authorName || "PARTICIPANT"} · ${message.authorRole || "PARTICIPANT"}`}
                 </strong>
                 <p>{message.body}</p>
+                {message.attachment && <a className="mm-message-attachment" href={message.attachment.data} download={message.attachment.name}>{message.attachment.type.startsWith("image/") && <img src={message.attachment.data} alt={message.attachment.name} />}📎 {message.attachment.name}</a>}
                 <small>{formatDate(message.createdAt)}</small>
               </div>
             ))}
           </div>
           <div className="mm-composer">
-            <input
+            <label title="Attach file">📎<input type="file" accept="image/*,.pdf,.txt,.zip" onChange={(event) => selectAttachment(event.target.files?.[0])} /></label>
+            <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && send()}
+              onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }}
               placeholder="Message participants..."
             />
-            <button onClick={send}>Send</button>
+            {attachment && <span className="mm-attachment-chip">📎 {attachment.name}<button onClick={() => setAttachment(null)}>×</button></span>}
+            <button onClick={send} disabled={uploading}>{uploading ? "Reading..." : "Send"}</button>
           </div>
         </div>
         <div className="mm-panel panel">
@@ -605,6 +565,84 @@ function Transaction({
       </div>
     </section>
   );
+}
+*/
+function Transaction({
+  request,
+  user,
+  onBack,
+  onStatus,
+  onRefresh,
+}: {
+  request: RequestRecord;
+  user: User;
+  onBack: () => void;
+  onStatus: (request: RequestRecord, status: string) => void;
+  onRefresh: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [attachment, setAttachment] = useState<{ name: string; type: string; data: string } | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [participantUsername, setParticipantUsername] = useState("");
+  const [participantRole, setParticipantRole] = useState<"buyer" | "seller">("buyer");
+  const send = async () => {
+    if ((!draft.trim() && !attachment) || sending) return;
+    setSending(true);
+    const response = await fetch(`/api/middleman/requests/${request.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: draft.trim() || "Shared an attachment.", attachment }) });
+    setSending(false);
+    if (!response.ok) return;
+    setDraft("");
+    setAttachment(null);
+    onRefresh();
+  };
+  const selectAttachment = (file?: File) => {
+    if (!file || file.size > 5 * 1024 * 1024) return;
+    const reader = new FileReader();
+    reader.onload = () => setAttachment({ name: file.name, type: file.type, data: String(reader.result || "") });
+    reader.readAsDataURL(file);
+  };
+  const addParticipant = async () => {
+    if (!participantUsername.trim()) return;
+    const response = await fetch(`/api/middleman/requests/${request.id}/participants`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ role: participantRole, username: participantUsername.trim() }) });
+    if (response.ok) { setParticipantUsername(""); onRefresh(); }
+  };
+  const removeParticipant = async (participantId?: string) => {
+    if (!participantId) return;
+    const response = await fetch(`/api/middleman/requests/${request.id}/participants/${participantId}`, { method: "DELETE" });
+    if (response.ok) onRefresh();
+  };
+  return (
+    <section className="transaction-view escrow-view mm-escrow-view">
+      <div className="escrow-topline"><div><button className="mm-back" onClick={onBack}>← Back to requests</button><p className="eyebrow">SECURE TRANSACTION ROOM</p><h1>{request.id}</h1></div><button className="drawer-trigger" onClick={() => setDrawerOpen(true)}>Transaction <span>→</span></button></div>
+      <div className="escrow-layout">
+        <aside className="conversation-rail"><div className="rail-heading"><div><p className="eyebrow">CONVERSATIONS</p><strong>Transaction inbox</strong></div><span className="inbox-count">1</span></div><label className="conversation-search"><span>⌕</span><input placeholder="Search conversations" /></label><p className="rail-label">RECENT</p><button className="conversation active"><div className="conversation-avatar"><Avatar user={user} className="avatar" /><span /></div><div className="conversation-copy"><strong>Transaction team</strong><small>{request.messages[request.messages.length - 1]?.body || "Transaction room created."}</small><em>{request.id}</em></div><time>Live</time></button></aside>
+        <main className="escrow-chat"><header className="escrow-chat-header"><div className="conversation-avatar"><Avatar user={user} className="avatar" /><span /></div><div><h2>Transaction team <i className="verified-mark">✓</i></h2><p><span className="presence-dot" /> Live · <b>{request.id}</b></p></div><span className="protected-badge">🛡 Protected Transaction</span></header><div className="transaction-banner"><div className="shield-icon">🛡</div><div><span>PROTECTED TRANSACTION</span><strong>{request.id} · {request.game}</strong><small>{request.item}</small></div><strong className="banner-amount">{request.amount}</strong><button onClick={() => setDrawerOpen(true)}>View transaction</button></div><div className="message-list escrow-messages">{request.messages.map((message) => message.system ? <div className="event-message" key={message.id}><span className="event-rule" /><div><strong>Transaction update</strong><p>{message.body}</p></div><span className="event-rule" /></div> : <div className={`escrow-message ${message.authorId === user.id ? "from-me" : message.authorRole === "MIDDLEMAN" ? "official" : "from-them"}`} key={message.id}><Avatar user={message.authorId === user.id ? user : request.buyer?.id === message.authorId ? request.buyer : request.seller || user} className="avatar tiny purple" /><div className="bubble-stack"><div className="message-meta"><strong>{message.authorId === user.id ? "You" : message.authorName || "Participant"}</strong>{message.authorRole === "MIDDLEMAN" && <span className="middleman-label">MIDDLEMAN</span>}<time>{formatDate(message.createdAt)}</time></div><div className="escrow-bubble"><p>{message.body}</p>{message.attachment && <a className="message-attachment" href={message.attachment.data} download={message.attachment.name}>{message.attachment.type.startsWith("image/") && <img src={message.attachment.data} alt={message.attachment.name} />}<span>📎 {message.attachment.name}</span></a>}</div>{message.authorId === user.id && <small className="read-state">{message.readBy?.some((id) => id !== message.authorId) ? "Seen ✓✓" : "Sent ✓"}</small>}</div></div>)}<div className="typing-indicator"><span /><span /><span /> Customer is typing</div></div><div className="mm-composer escrow-composer"><div className="composer-row"><label className="attach-button" title="Attach file">📎<input type="file" accept="image/*,.pdf,.txt,.zip" onChange={(event) => selectAttachment(event.target.files?.[0])} /></label><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Message the transaction participants..." rows={1} /><button className="emoji-button">😊</button><button className="send" onClick={send} disabled={sending}>{sending ? "..." : "➤"}</button></div>{attachment && <div className="attachment-chip">📎 {attachment.name}<button onClick={() => setAttachment(null)}>×</button></div>}<div className="security-line">🔒 <span><strong>Keep your transaction communication here.</strong> Never share passwords, recovery codes, payment credentials, or other sensitive information.</span></div></div></main>
+        <aside className={`transaction-drawer ${drawerOpen ? "open" : ""}`}><div className="drawer-head"><div><p className="eyebrow">TRANSACTION</p><h2>{request.id}</h2></div><button onClick={() => setDrawerOpen(false)}>×</button></div><div className="transaction-item"><div className="game-avatar red">VAL</div><div><span>ITEM</span><strong>{request.item}</strong><small>{request.game}</small></div></div><div className="amount-row"><span>Amount</span><strong>{request.amount}</strong></div><div className="status-card"><span>Current status</span><strong><i /> {request.status}</strong></div><div className="people-block"><p className="eyebrow">PARTICIPANTS</p><div className="escrow-person"><Avatar user={user} className="avatar escrow-avatar" /><div><strong>{user.displayName || user.username}</strong><small>MIDDLEMAN · AUTHORIZED</small></div><span className="verified-mark">✓</span></div>{request.buyer && <div className="escrow-person"><Avatar user={request.buyer} className="avatar escrow-avatar" /><div><strong>{request.buyer.username}</strong><small>BUYER · VERIFIED</small></div><button onClick={() => removeParticipant(request.buyer?.id)}>Remove</button></div>}{request.seller && <div className="escrow-person"><Avatar user={request.seller} className="avatar escrow-avatar" /><div><strong>{request.seller.username}</strong><small>SELLER · VERIFIED</small></div><button onClick={() => removeParticipant(request.seller?.id)}>Remove</button></div>}</div><div className="add-participant"><p className="eyebrow">ADD PARTICIPANT</p><select value={participantRole} onChange={(event) => setParticipantRole(event.target.value as "buyer" | "seller")}><option value="buyer">Buyer</option><option value="seller">Seller</option></select><input value={participantUsername} onChange={(event) => setParticipantUsername(event.target.value)} placeholder="Registered username" /><button onClick={addParticipant}>Add</button></div><div className="timeline"><p className="eyebrow">TRANSACTION TIMELINE</p>{["Transaction Created", "Payment Secured", "Seller Delivering", "Buyer Verification", "Completed"].map((label, index) => <div className={index < 2 ? "done" : index === 2 ? "current" : ""} key={label}><span>{index < 2 ? "✓" : index === 2 ? "●" : "○"}</span><strong>{label}</strong></div>)}</div><div className="action-stack">{statuses.map((status) => <button className={request.status === status ? "primary-button" : ""} key={status} onClick={() => onStatus(request, status)}>{status}</button>)}<button onClick={() => onStatus(request, "Disputed")}>Open dispute</button></div></aside>
+      </div>
+    </section>
+  );
+}
+function PrivateMessages({ conversations, selected, onSelect, onRefresh, user }: { conversations: PrivateConversation[]; selected: PrivateConversation | null; onSelect: (conversation: PrivateConversation) => void; onRefresh: () => void; user: User }) {
+  const [draft, setDraft] = useState("");
+  const active = selected || conversations[0] || null;
+  useEffect(() => {
+    if (!active) return;
+    const refresh = () => fetch(`/api/conversations/${active.id}`).then((response) => response.ok ? response.json() : null).then((data) => data?.conversation && onSelect(data.conversation)).catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  }, [active?.id]);
+  const send = async () => {
+    if (!active || !draft.trim()) return;
+    const response = await fetch(`/api/conversations/${active.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: draft.trim() }) });
+    if (!response.ok) return;
+    const data = await response.json();
+    onSelect({ ...active, messages: [...active.messages, { ...data.message, author: "You", role: user.role, time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) }] });
+    setDraft("");
+    onRefresh();
+  };
+  return <div className="private-messages"><div className="private-list mm-panel panel"><div className="mm-panel-head"><div><p className="eyebrow">DIRECT SUPPORT</p><h2>Private messages</h2></div><span className="mm-count">{conversations.length} chats</span></div>{conversations.length ? conversations.map((conversation) => <button className={`private-row ${active?.id === conversation.id ? "active" : ""}`} key={conversation.id} onClick={() => onSelect(conversation)}><Avatar user={conversation.customer} /><span><strong>{conversation.customer?.displayName || conversation.customer?.username || "Customer"}</strong><small>{conversation.messages[conversation.messages.length - 1]?.body || "New private conversation"}</small></span></button>) : <div className="mm-empty"><span>□</span><strong>No private conversations yet</strong><small>Customers who contact you will appear here.</small></div>}</div>{active ? <div className="private-chat mm-panel panel"><div className="mm-panel-head"><div><p className="eyebrow">PRIVATE CONVERSATION</p><h2>{active.customer?.displayName || active.customer?.username}</h2></div><span className="mm-live">● Private</span></div><div className="mm-messages">{active.messages.map((message) => <div className={`mm-message ${message.authorId === user.id ? "own" : ""}`} key={message.id}><strong>{message.authorId === user.id ? "YOU" : active.customer?.username || "CUSTOMER"}</strong><p>{message.body}</p><small>{message.createdAt ? formatDate(message.createdAt) : "Now"}</small></div>)}</div><div className="mm-composer"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Message this customer..." /><button onClick={send}>➤</button></div></div> : <div className="private-chat mm-panel panel mm-empty"><strong>Select a private conversation</strong><small>Private customer messages are only visible to both participants.</small></div>}</div>;
 }
 function AuditLogs() {
   const [logs, setLogs] = useState<

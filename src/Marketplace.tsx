@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./Marketplace.css";
 
 type Listing = {
@@ -17,6 +17,7 @@ type Listing = {
   rating: number;
   verified: boolean;
   sample?: boolean;
+  createdAt?: string;
 };
 const seed = [
   [
@@ -369,8 +370,10 @@ const seed = [
   seller: item[9],
   avatar: item[10],
   rating: item[11],
-  verified: true,
+  // Verification reflects the seller's actual rating rather than a hardcoded flag
+  verified: Number(item[11]) >= 4.8,
   sample: true,
+  createdAt: new Date(Date.now() - index * 3 * 24 * 60 * 60 * 1000).toISOString(),
 })) as Listing[];
 const catalog = [
   ...seed,
@@ -381,6 +384,7 @@ const catalog = [
       29,
       Math.round((base.price * (0.72 + ((variant * 17) % 61) / 100)) / 5) * 5,
     );
+    const rating = Number((4.6 + (variant % 5) / 10).toFixed(1));
     return {
       ...base,
       id: `generated-${index + 1}`,
@@ -390,10 +394,13 @@ const catalog = [
         base.level === "—" ? "—" : String(Number(base.level) + (variant % 18)),
       region: ["NA", "EU", "SEA", "Global"][variant % 4],
       price,
-      seller: `${["Alex", "Jamie", "Taylor", "Morgan", "Riley", "Casey"][variant % 6]} ${["Reyes", "Patel", "Nguyen", "Santos", "Kim", "Bennett"][(variant + index) % 6]}`,
+      seller: `${["Jordan", "Jamie", "Taylor", "Morgan", "Riley", "Casey"][variant % 6]} ${["Reyes", "Patel", "Nguyen", "Santos", "Kim", "Bennett"][(variant + index) % 6]}`,
       avatar: `${["AR", "JP", "TN", "MS", "RK", "CB"][variant % 6]}`,
-      rating: Number((4.6 + (variant % 5) / 10).toFixed(1)),
+      rating,
+      // Verification reflects the generated seller's actual rating rather than a hardcoded flag
+      verified: rating >= 4.8,
       sample: true,
+      createdAt: new Date(Date.now() - (seed.length + index) * 3 * 24 * 60 * 60 * 1000).toISOString(),
     };
   }),
 ];
@@ -402,19 +409,85 @@ export function Marketplace({
   onRequest,
   onSell,
   onToast,
+  authenticated = false,
 }: {
   onRequest: () => void;
   onSell: () => void;
   onToast: (message: string) => void;
+  authenticated?: boolean;
 }) {
-  const [query, setQuery] = useState("");
-  const [game, setGame] = useState("All games");
-  const [sort, setSort] = useState("Recommended");
-  const [verified, setVerified] = useState(false);
-  const [selected, setSelected] = useState<Listing | null>(null);
-  const custom = JSON.parse(
-    localStorage.getItem("gameguard-listings") || "[]",
-  ) as Listing[];
+  const initialParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [query, setQuery] = useState(() => initialParams.get("q") || "");
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  const [game, setGame] = useState(() => initialParams.get("game") || "All games");
+  const [sort, setSort] = useState(() => initialParams.get("sort") || "Recommended");
+  const [verified, setVerified] = useState(() => initialParams.get("verified") === "true");
+  const [layout, setLayout] = useState<"grid" | "list">(() => (localStorage.getItem("gameguard-market-layout") as "grid" | "list") || "grid");
+  const [favorites, setFavorites] = useState<string[]>(() => JSON.parse(localStorage.getItem("gameguard-favorites") || "[]"));
+  const [visibleCount, setVisibleCount] = useState(24);
+  const [loading, setLoading] = useState(true);
+  const routeListingId = window.location.pathname.match(/^\/marketplace\/listing\/([^/]+)$/)?.[1];
+  const [selected, setSelected] = useState<Listing | null>(() => routeListingId ? [...(JSON.parse(localStorage.getItem("gameguard-listings") || "[]") as Listing[]), ...catalog].find((listing) => listing.id === routeListingId) || null : null);
+  const custom = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem("gameguard-listings") || "[]") as Listing[]; } catch { return []; }
+  }, []);
+  // Marketplace data is generated locally; simulate the initial fetch so the loading state is real, not decorative
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLoading(false), 350);
+    return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  useEffect(() => {
+    setVisibleCount(24);
+  }, [debouncedQuery, game, sort, verified]);
+  useEffect(() => {
+    if (selected) return;
+    const params = new URLSearchParams();
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    if (game !== "All games") params.set("game", game);
+    if (sort !== "Recommended") params.set("sort", sort);
+    if (verified) params.set("verified", "true");
+    const search = params.toString();
+    window.history.replaceState({}, "", search ? `/marketplace?${search}` : "/marketplace");
+  }, [debouncedQuery, game, sort, verified, selected]);
+  useEffect(() => {
+    const handleNavigation = () => {
+      const id = window.location.pathname.match(/^\/marketplace\/listing\/([^/]+)$/)?.[1];
+      setSelected(id ? [...custom, ...catalog].find((listing) => listing.id === id) || null : null);
+    };
+    window.addEventListener("popstate", handleNavigation);
+    return () => window.removeEventListener("popstate", handleNavigation);
+  }, [custom]);
+  const chooseListing = (listing: Listing) => {
+    setSelected(listing);
+    window.history.pushState({}, "", `/marketplace/listing/${listing.id}`);
+  };
+  const closeListing = () => {
+    setSelected(null);
+    if (window.location.pathname.startsWith("/marketplace/listing/")) window.history.pushState({}, "", "/marketplace");
+  };
+  const toggleFavorite = (listing: Listing) => {
+    if (!authenticated) return onToast("Sign in to save favorites");
+    setFavorites((current) => {
+      const next = current.includes(listing.id) ? current.filter((id) => id !== listing.id) : [...current, listing.id];
+      localStorage.setItem("gameguard-favorites", JSON.stringify(next));
+      return next;
+    });
+  };
+  const clearFilters = () => {
+    setQuery("");
+    setDebouncedQuery("");
+    setGame("All games");
+    setSort("Recommended");
+    setVerified(false);
+  };
+  const gameOptions = useMemo(
+    () => Array.from(new Set([...custom, ...catalog].map((listing) => listing.game))).sort(),
+    [custom],
+  );
   const listings = useMemo(
     () =>
       [...custom, ...catalog]
@@ -424,19 +497,23 @@ export function Marketplace({
             (!verified || listing.verified) &&
             `${listing.title} ${listing.game} ${listing.seller} ${listing.rank} ${listing.feature}`
               .toLowerCase()
-              .includes(query.toLowerCase()),
+              .includes(debouncedQuery.toLowerCase()),
         )
         .sort((a, b) =>
           sort === "Lowest Price"
             ? a.price - b.price
             : sort === "Highest Price"
               ? b.price - a.price
+              : sort === "Newest"
+                ? new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
               : sort === "Highest Rated"
                 ? b.rating - a.rating
-                : 0,
+                // Recommended: verified sellers first, then highest rated
+                : Number(b.verified) - Number(a.verified) || b.rating - a.rating,
         ),
-    [custom, game, query, sort, verified],
+    [custom, game, debouncedQuery, sort, verified],
   );
+  const visibleListings = listings.slice(0, visibleCount);
   return (
     <section className="marketplace-page">
       <div className="marketplace-heading">
@@ -465,16 +542,7 @@ export function Marketplace({
         </div>
         <select value={game} onChange={(e) => setGame(e.target.value)}>
           <option>All games</option>
-          {[
-            "Valorant",
-            "Mobile Legends",
-            "Roblox",
-            "Fortnite",
-            "PUBG",
-            "Call of Duty",
-            "League of Legends",
-            "Other",
-          ].map((item) => (
+          {gameOptions.map((item) => (
             <option key={item}>{item}</option>
           ))}
         </select>
@@ -493,30 +561,57 @@ export function Marketplace({
           />{" "}
           Verified only
         </label>
-        <button className="grid-toggle active">▦</button>
-        <button className="grid-toggle">☷</button>
+        <button className={layout === "grid" ? "grid-toggle active" : "grid-toggle"} onClick={() => { setLayout("grid"); localStorage.setItem("gameguard-market-layout", "grid"); }}>▦</button>
+        <button className={layout === "list" ? "grid-toggle active" : "grid-toggle"} onClick={() => { setLayout("list"); localStorage.setItem("gameguard-market-layout", "list"); }}>☷</button>
       </div>
       <div className="marketplace-meta">
-        <span>{listings.length} accounts available</span>
+        <span>{loading ? "Loading listings..." : `${listings.length} accounts available`}</span>
         <span>
           All listings are screened for safe in-platform transactions.
         </span>
       </div>
-      {listings.length ? (
-        <div className="listing-grid">
-          {listings.map((listing) => (
-            <ListingCard
-              key={listing.id}
-              listing={listing}
-              onClick={() => setSelected(listing)}
-            />
+      {loading ? (
+        <div className={layout === "list" ? "listing-grid listing-list" : "listing-grid"}>
+          {Array.from({ length: layout === "list" ? 6 : 8 }, (_, index) => (
+            <div className="listing-card listing-skeleton" key={index}>
+              <div className="skeleton-block skeleton-art" />
+              <div className="listing-body">
+                <div className="skeleton-block skeleton-line" style={{ width: "70%" }} />
+                <div className="skeleton-block skeleton-line" style={{ width: "45%" }} />
+                <div className="skeleton-block skeleton-line" style={{ width: "90%" }} />
+              </div>
+            </div>
           ))}
         </div>
+      ) : listings.length ? (
+        <>
+          <div className={layout === "list" ? "listing-grid listing-list" : "listing-grid"}>
+            {visibleListings.map((listing) => (
+              <ListingCard
+                key={listing.id}
+                listing={listing}
+                onClick={() => chooseListing(listing)}
+                favorite={favorites.includes(listing.id)}
+                onFavorite={() => toggleFavorite(listing)}
+              />
+            ))}
+          </div>
+          {visibleCount < listings.length && (
+            <div className="market-load-more">
+              <button className="outline-button" onClick={() => setVisibleCount((count) => count + 24)}>
+                Load more ({listings.length - visibleCount} remaining)
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <div className="market-empty">
           <div>⌕</div>
           <h2>No accounts found</h2>
-          <p>Try another game, seller, or search term.</p>
+          <p>Try adjusting your search or filters.</p>
+          <button className="outline-button" onClick={clearFilters}>
+            Clear filters
+          </button>
         </div>
       )}
       <p className="market-disclaimer">
@@ -526,7 +621,7 @@ export function Marketplace({
       {selected && (
         <ListingDetail
           listing={selected}
-          close={() => setSelected(null)}
+          close={closeListing}
           onRequest={onRequest}
           onToast={onToast}
         />
@@ -538,18 +633,22 @@ export function Marketplace({
 function ListingCard({
   listing,
   onClick,
+  favorite,
+  onFavorite,
 }: {
   listing: Listing;
   onClick: () => void;
+  favorite: boolean;
+  onFavorite: () => void;
 }) {
   return (
     <article className="listing-card">
       <button className={`listing-art ${listing.tone}`} onClick={onClick}>
         <span>{listing.short}</span>
-        <b>♡</b>
+        <b aria-label={favorite ? "Remove favorite" : "Add favorite"} onClick={(event) => { event.stopPropagation(); onFavorite(); }}>{favorite ? "♥" : "♡"}</b>
       </button>
       <div className="listing-body">
-        <div className="verified-badge">✓ VERIFIED SELLER</div>
+        {listing.verified && <div className="verified-badge">✓ VERIFIED SELLER</div>}
         <button className="listing-title" onClick={onClick}>
           {listing.title}
         </button>
@@ -563,9 +662,7 @@ function ListingCard({
           <div className="avatar tiny purple">{listing.avatar}</div>
           <div>
             <strong>{listing.seller}</strong>
-            <small>
-              ✓ Verified Seller · <span>★★★★★ {listing.rating}</span>
-            </small>
+              <small>{listing.verified && "✓ Verified Seller · "}<span>{listing.rating ? `★★★★★ ${listing.rating}` : "Rating unavailable"}</span></small>
           </div>
         </div>
         <div className="listing-bottom">
@@ -654,7 +751,7 @@ function ListingDetail({
           </div>
           <p className="detail-notice">
             Please comply with the relevant game publisher Terms of Service and
-            platform rules. Never share account passwords in marketplace
+            platform rules. Never share account s in marketplace
             messages.
           </p>
         </div>
@@ -868,7 +965,9 @@ export function SellAccount({
                     rating: 0,
                     verified: false,
                   }}
-                  onClick={() => undefined}
+                    onClick={() => undefined}
+                    favorite={false}
+                    onFavorite={() => undefined}
                 />
                 <p className="field-help">
                   Publishing sends this development listing into your local
@@ -917,6 +1016,7 @@ export function SellAccount({
                         avatar: "YO",
                         rating: 0,
                         verified: false,
+                        createdAt: new Date().toISOString(),
                       });
                       localStorage.setItem(
                         "gameguard-listings",
