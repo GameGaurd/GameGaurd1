@@ -148,6 +148,10 @@ export function MiddlemanDashboard({
     load();
   }, []);
   useEffect(() => {
+    const timer = window.setInterval(load, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (section !== "Messages") return;
     fetch("/api/middleman/conversations").then((response) => response.ok ? response.json() : { conversations: [] }).then((data) => setPrivateConversations(data.conversations || [])).catch(() => setPrivateConversations([]));
   }, [section]);

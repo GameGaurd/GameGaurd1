@@ -54,25 +54,6 @@ const games = [
   ["Roblox", "RBX", "yellow", "Limited items"],
   ["Fortnite", "FN", "violet", "Accounts & cosmetics"],
 ];
-const requestSeed: RequestRecord = {
-  id: "",
-  game: "Valorant",
-  item: "Radiant Valorant Account",
-  amount: "$240.00",
-  status: "Open",
-  created: "Just now",
-  messages: [
-    {
-      id: 1,
-      author: "System",
-      role: "SYSTEM",
-      body: "Transaction room created. Waiting for middleman acceptance.",
-      time: "Just now",
-      system: true,
-    },
-  ],
-};
-
 function App() {
   const path = window.location.pathname;
   const [user, setUser] = useState<User | null>(null);
@@ -437,11 +418,37 @@ function App() {
             setShowRequest(false);
             setStep(1);
           }}
-          submit={() => {
-            setRequest(requestSeed);
+          submit={async ({ game, item, amount }) => {
+            const response = await fetch("/api/requests", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                game,
+                item,
+                amount,
+              }),
+            });
+            if (!response.ok) {
+              setToast("Request could not be submitted. Please try again.");
+              return;
+            }
+            const data = await response.json();
+            const created = data.request;
+            setRequest({
+              id: created.id,
+              game: created.game,
+              item: created.item,
+              amount: created.amount,
+              status: created.status,
+              created: new Date(created.createdAt).toLocaleString(),
+              middleman: created.middleman,
+              buyer: created.buyer,
+              seller: created.seller,
+              messages: [],
+            });
             setShowRequest(false);
             setStep(1);
-            setToast("Request submitted · MM-2026-000001");
+            setToast(`Request submitted · ${created.id}`);
           }}
         />
       )}
@@ -1483,8 +1490,11 @@ function RequestModal({
   step: number;
   setStep: (step: number) => void;
   close: () => void;
-  submit: () => void;
+  submit: (details: { game: string; item: string; amount: string }) => void | Promise<void>;
 }) {
+  const [game, setGame] = useState("Valorant");
+  const [item, setItem] = useState("Radiant Valorant Account");
+  const [amount, setAmount] = useState("240.00");
   return (
     <div
       className="modal-backdrop"
@@ -1517,7 +1527,7 @@ function RequestModal({
           <div className="form-content">
             <label>
               Game
-              <select>
+              <select value={game} onChange={(event) => setGame(event.target.value)}>
                 <option>Valorant</option>
                 <option>Mobile Legends</option>
                 <option>Roblox</option>
@@ -1534,12 +1544,12 @@ function RequestModal({
             </label>
             <label>
               Item or account description
-              <input defaultValue="Radiant Valorant Account" />
+              <input value={item} onChange={(event) => setItem(event.target.value)} />
             </label>
             <div className="form-row">
               <label>
                 Amount
-                <input defaultValue="240.00" />
+                <input value={amount} onChange={(event) => setAmount(event.target.value)} />
               </label>
               <label>
                 Currency
@@ -1603,7 +1613,7 @@ function RequestModal({
               Continue →
             </button>
           ) : (
-            <button className="primary-button" onClick={submit}>
+            <button className="primary-button" onClick={() => submit({ game, item, amount })}>
               Submit request →
             </button>
           )}
