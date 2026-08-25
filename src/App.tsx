@@ -1188,10 +1188,12 @@ function AuthPage({
           )}
           {!isForgot && (
             <label>
-              {isLogin ? "Email" : "Email"}
+              {isLogin ? "Username or email" : "Email"}
               <input
                 required
-                type={isLogin ? "email" : "email"}
+                type={isLogin ? "text" : "email"}
+                autoComplete={isLogin ? "username" : "email"}
+                placeholder={isLogin ? "Username or email" : undefined}
                 value={isLogin ? form.identity : form.email}
                 onChange={(e) =>
                   setForm({
