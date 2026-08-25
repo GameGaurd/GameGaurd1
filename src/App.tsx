@@ -1484,15 +1484,27 @@ function DirectMessages({
   useEffect(() => {
     const refresh = () => fetch(`/api/conversations/${conversation.id}`).then((response) => response.ok ? response.json() : null).then((data) => data?.conversation && setConversation(data.conversation)).catch(() => undefined);
     refresh();
-    const timer = window.setInterval(refresh, 3000);
-    return () => window.clearInterval(timer);
   }, [conversation.id]);
   const send = async () => {
     if (!draft.trim()) return;
-    const response = await fetch(`/api/conversations/${conversation.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: draft.trim() }) });
-    if (!response.ok) return setToast("Message could not be sent");
+    const body = draft.trim();
+    let activeConversation = conversation;
+    let response = await fetch(`/api/conversations/${conversation.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body }) });
+    if (!response.ok && conversation.middleman?.id) {
+      const recreated = await fetch("/api/conversations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ middlemanId: conversation.middleman.id }) });
+      if (recreated.ok) {
+        const recreatedData = await recreated.json();
+        activeConversation = recreatedData.conversation;
+        setConversation(activeConversation);
+        response = await fetch(`/api/conversations/${activeConversation.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body }) });
+      }
+    }
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      return setToast(error?.error || "Message could not be sent");
+    }
     const data = await response.json();
-    setConversation({ ...conversation, messages: [...conversation.messages, { id: Date.now(), authorId: user.id, author: "You", role: user.role, body: data.message.body, time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), readBy: [user.id] }] });
+    setConversation({ ...activeConversation, messages: [...activeConversation.messages, { id: Date.now(), authorId: user.id, author: "You", role: user.role, body: data.message.body, time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), readBy: [user.id] }] });
     setDraft("");
   };
   return <section className="transaction-view escrow-view"><div className="escrow-topline"><div><p className="eyebrow">PRIVATE MIDDLEMAN MESSAGES</p><h1>{conversation.middleman?.displayName || "Middleman"}</h1></div></div><div className="escrow-layout direct-message-layout"><aside className="conversation-rail"><div className="rail-heading"><div><p className="eyebrow">CONVERSATIONS</p><strong>Private messages</strong></div></div><button className="conversation active"><div className="conversation-avatar"><CustomerAvatar initials={conversation.middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar" /><span /></div><div className="conversation-copy"><strong>{conversation.middleman?.displayName || "Middleman"}</strong><small>Private transaction support</small><em>{conversation.id}</em></div></button></aside><main className="escrow-chat"><header className="escrow-chat-header"><div className="conversation-avatar"><CustomerAvatar initials={conversation.middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar" /><span /></div><div><h2>{conversation.middleman?.displayName || "Middleman"} <i className="verified-mark">✓</i></h2><p><span className="presence-dot" /> Private conversation</p></div><span className="protected-badge">🔒 Private</span></header><div className="message-list escrow-messages">{conversation.messages.length ? conversation.messages.map((message) => <div className={`escrow-message ${message.authorId === user.id ? "from-me" : "from-them"}`} key={message.id}><CustomerAvatar initials={message.authorId === user.id ? user.avatar : conversation.middleman?.avatar || "MM"} image={message.authorId === user.id ? undefined : "/avatars/mysticmm-customer.svg"} className="avatar tiny purple" /><div className="bubble-stack"><div className="message-meta"><strong>{message.authorId === user.id ? "You" : conversation.middleman?.displayName || "Middleman"}</strong><time>{message.time}</time></div><div className="escrow-bubble"><p>{message.body}</p></div><small className="read-state">{message.authorId === user.id ? "Sent ✓" : ""}</small></div></div>) : <div className="empty-conversation"><div>🔒</div><strong>Private conversation ready</strong><p>Contact your authorized middleman here.</p></div>}</div><div className="escrow-composer"><div className="composer-row"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="Message your middleman..." rows={1} /><button className="send" onClick={send}>➤</button></div><div className="security-line">🔒 Keep transaction communication in GameGuard.</div></div></main><aside className="transaction-drawer open"><div className="drawer-head"><div><p className="eyebrow">PRIVATE CHAT</p><h2>{conversation.id}</h2></div></div><div className="people-block"><p className="eyebrow">PARTICIPANTS</p><div className="escrow-person"><CustomerAvatar initials={user.avatar} className="avatar escrow-avatar" /><div><strong>{user.displayName || user.username}</strong><small>CUSTOMER</small></div></div><div className="escrow-person"><CustomerAvatar initials={conversation.middleman?.avatar || "MM"} image="/avatars/mysticmm-customer.svg" className="avatar escrow-avatar" /><div><strong>{conversation.middleman?.displayName || "Middleman"}</strong><small>AUTHORIZED MIDDLEMAN</small></div></div></div></aside></div></section>;
