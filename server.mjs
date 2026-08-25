@@ -9,14 +9,17 @@ const scrypt = promisify(scryptCallback)
 const port = Number(process.env.API_PORT || process.env.PORT || 8787)
 const dataDir = process.env.VERCEL === '1' ? new URL('file:///tmp/gameguard-data/') : new URL('./data/', import.meta.url)
 const dbUrl = new URL('auth.json', dataDir)
-const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, '')
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+const configuredSupabaseUrl = process.env.SUPABASE_URL?.trim().replace(/\/$/, '')
+const supabaseProjectMatch = configuredSupabaseUrl?.match(/^https:\/\/supabase\.com\/dashboard\/project\/([^/]+)$/)
+const supabaseUrl = supabaseProjectMatch ? `https://${supabaseProjectMatch[1]}.supabase.co` : configuredSupabaseUrl
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY
 const sessionHours = 24 * 7
 const sessionSecret = process.env.SESSION_SECRET || process.env.MIDDLEMAN_PASSWORD || 'gameguard-development-session-secret'
 
 function emptyDb() { return { users: [], sessions: [], resetTokens: [], requests: [], messages: [], conversations: [], auditLogs: [] } }
 function supabaseHeaders() { return { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'content-type': 'application/json' } }
 async function readDb() {
+  if (process.env.VERCEL === '1' && (!supabaseUrl || !supabaseKey)) throw new Error('Persistent storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel.')
   if (supabaseUrl && supabaseKey) {
     const response = await fetch(`${supabaseUrl}/rest/v1/gameguard_state?id=eq.main&select=data`, { headers: supabaseHeaders() })
     if (!response.ok) throw new Error(`Supabase read failed (${response.status})`)
@@ -162,7 +165,13 @@ export const handler = async (request, response) => {
   if (request.method === 'OPTIONS') { response.writeHead(204); return response.end() }
   if (await serveFrontend(request, response)) return
   if (!request.url?.startsWith('/api/')) return send(response, 404, { error: 'Not found' })
-  const db = await readDb()
+  let db
+  try {
+    db = await readDb()
+  } catch (error) {
+    console.error(error)
+    return send(response, 503, { error: 'Persistent storage is unavailable. Check the Supabase environment variables and table.' })
+  }
   db.sessions = db.sessions.filter((session) => session.expiresAt > Date.now())
   const requestUrl = new URL(request.url, `http://${request.headers.host}`)
   const path = requestUrl.pathname === '/api/index' && requestUrl.searchParams.has('path')
