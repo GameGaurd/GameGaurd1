@@ -167,7 +167,7 @@ function App() {
         })
         .catch(() => undefined);
     refresh();
-    const timer = window.setInterval(refresh, 3000);
+    const timer = window.setInterval(refresh, 2000);
     return () => window.clearInterval(timer);
   }, [user]);
   useEffect(() => {
@@ -1461,6 +1461,8 @@ function DirectMessages({
   useEffect(() => {
     const refresh = () => fetch(`/api/conversations/${conversation.id}`).then((response) => response.ok ? response.json() : null).then((data) => data?.conversation && setConversation(data.conversation)).catch(() => undefined);
     refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(timer);
   }, [conversation.id]);
   const send = async () => {
     if (!draft.trim()) return;

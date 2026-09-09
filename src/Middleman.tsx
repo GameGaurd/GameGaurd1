@@ -149,11 +149,14 @@ export function MiddlemanDashboard({
   }, []);
   useEffect(() => {
     if (section !== "Messages") return;
-    fetch("/api/middleman/conversations").then((response) => response.ok ? response.json() : { conversations: [] }).then((data) => setPrivateConversations(data.conversations || [])).catch(() => setPrivateConversations([]));
+    const refresh = () => fetch("/api/middleman/conversations").then((response) => response.ok ? response.json() : { conversations: [] }).then((data) => setPrivateConversations(data.conversations || [])).catch(() => setPrivateConversations([]));
+    refresh();
+    const timer = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(timer);
   }, [section]);
   useEffect(() => {
     if (section !== "Transaction" || !selected) return;
-    const timer = window.setInterval(() => refreshRequest(selected.id), 3000);
+    const timer = window.setInterval(() => refreshRequest(selected.id), 2000);
     return () => window.clearInterval(timer);
   }, [section, selected?.id]);
   const refreshRequest = async (requestId?: string) => {
@@ -630,7 +633,7 @@ function PrivateMessages({ conversations, selected, onSelect, onRefresh, user }:
     if (!active) return;
     const refresh = () => fetch(`/api/conversations/${active.id}`).then((response) => response.ok ? response.json() : null).then((data) => data?.conversation && onSelect(data.conversation)).catch(() => undefined);
     refresh();
-    const timer = window.setInterval(refresh, 3000);
+    const timer = window.setInterval(refresh, 2000);
     return () => window.clearInterval(timer);
   }, [active?.id]);
   const send = async () => {
